@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Study Assistant (Gemini)</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <div class="container">
+    <h1>AI Study Assistant</h1>
+
+    <div class="card">
+
+      <div class="mode">
+        <label><input type="radio" name="mode" value="text" checked> Paste text</label>
+        <label><input type="radio" name="mode" value="file"> Upload file</label>
+        <label><input type="radio" name="mode" value="url"> URL</label>
+      </div>
+
+      <textarea id="inputText" placeholder="Dán văn bản vào đây..."></textarea>
+
+      <input type="file" id="inputFile" />
+
+      <input type="text" id="inputURL" placeholder="Dán URL..." />
+
+      <select id="type">
+        <option value="summary">Tóm tắt</option>
+        <option value="mindmap">Mindmap</option>
+        <option value="flashcards">Flashcards</option>
+        <option value="qa">Q&A</option>
+      </select>
+
+      <button onclick="generate()">Generate</button>
+    </div>
+
+    <h2>Kết quả</h2>
+    <div id="output" class="output"></div>
+
+    <button onclick="copyText()">Copy</button>
+    <button onclick="downloadText()">Download txt</button>
+    <button onclick="exportMindmap()">Export Mindmap PNG</button>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
