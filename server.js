@@ -19,10 +19,8 @@ const __dirname = path.resolve();
 const UPLOADS = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
 
-// multer
-const upload = multer({ dest: UPLOADS, limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({ dest: UPLOADS, limits: { fileSize: 25 * 1024 * 1024 } });
 
-// Init Gemini client (use AI Studio API key in Render env var)
 if (!process.env.GEMINI_API_KEY) {
   console.warn("WARNING: GEMINI_API_KEY not set in environment variables.");
 }
@@ -33,8 +31,8 @@ const CLEAN_HTML = (html) =>
   sanitizeHtml(html || "", { allowedTags: [] }).replace(/\s+/g, " ").trim();
 
 async function extractText(filePath, ext) {
-  ext = ext.toLowerCase();
   try {
+    ext = ext.toLowerCase();
     if (ext === ".pdf") {
       const data = await pdf(fs.readFileSync(filePath));
       return data.text || "";
@@ -52,18 +50,14 @@ async function extractText(filePath, ext) {
   return "";
 }
 
-// call Gemini text
 async function geminiText(prompt) {
   const model = genAI.getGenerativeModel({ model: "models/gemini-2.0-flash" });
   const result = await model.generateContent({
     contents: [{ parts: [{ text: prompt }] }]
   });
-  // try to extract text
-  if (typeof result.response?.text === "function") {
-    return await result.response.text();
-  }
+
+  if (typeof result.response?.text === "function") return await result.response.text();
   if (result.response?.text) return result.response.text;
-  // fallback to candidates
   const cand = result.response?.candidates?.[0]?.content?.[0]?.text;
   if (cand) return cand;
   return JSON.stringify(result);
@@ -72,7 +66,7 @@ async function geminiText(prompt) {
 // upload endpoint
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
     const orig = req.file.originalname || "file";
     const ext = path.extname(orig) || "";
     const newFilename = req.file.filename + ext;
@@ -99,7 +93,7 @@ app.post("/api/process", async (req, res) => {
       content = text || "";
     } else if (inputType === "url") {
       if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
-        return res.json({ success: false, error: "URL không hợp lệ. Phải bắt đầu bằng http/https." });
+        return res.json({ success: false, error: "URL không hợp lệ. Bắt đầu bằng http/https." });
       }
       try {
         const r = await fetch(url, { timeout: 15000 });
@@ -122,66 +116,80 @@ app.post("/api/process", async (req, res) => {
     }
 
     if (!content || content.trim().length === 0) {
-      return res.json({ success: false, error: "Không có nội dung để xử lý" });
+      return res.json({ success: false, error: "Không có nội dung để xử lý." });
     }
 
-    // truncate to keep requests small & fast
+    // truncate
     const MAX = 18000;
     const truncated = content.slice(0, MAX);
 
-    // Mode handlers
+    // modes
     if (mode === "summary") {
-      const prompt = `Tóm tắt ngắn gọn bằng tiếng Việt (cô đọng) nội dung sau:\n\n${truncated}`;
+      const prompt = `Tóm tắt ngắn gọn bằng tiếng Việt:\n\n${truncated}`;
       const out = await geminiText(prompt);
       return res.json({ success: true, type: "text", output: out });
     }
 
     if (mode === "flashcards") {
-      const prompt = `Tạo flashcards dưới dạng JSON array of {"q","a"} từ nội dung sau (tiếng Việt). Chỉ trả JSON:\n\n${truncated}`;
+      const prompt = `Tạo flashcards dạng JSON array of {"q","a"} từ nội dung sau ( tiếng Việt ). Chỉ trả JSON:\n\n${truncated}`;
       const out = await geminiText(prompt);
       return res.json({ success: true, type: "text", output: out });
     }
 
     if (mode === "qa") {
-      const prompt = `Tạo danh sách câu hỏi và trả lời (JSON array of {"q","a"}) từ nội dung sau (tiếng Việt). Chỉ trả JSON:\n\n${truncated}`;
+      const prompt = `Tạo danh sách Q&A dạng JSON array of {"q","a"} từ nội dung sau ( tiếng Việt ). Chỉ trả JSON:\n\n${truncated}`;
       const out = await geminiText(prompt);
       return res.json({ success: true, type: "text", output: out });
     }
 
-    if (mode === "mindmap") {
-      // Ask AI to produce a clean JSON mindmap structure only
-      const prompt = `Phân tích nội dung sau và trả về CHỈ MỘT JSON mô tả mindmap với format:
+    // NEW: mindmap_text mode -> textual mindmap (hierarchical bullets) and JSON
+    if (mode === "mindmap_text") {
+      // ask AI to return both a textual bullet mindmap and a JSON structure
+      const prompt = `Phân tích nội dung sau và trả về hai phần (PHẢI CHỈ TRẢ 1) JSON đầu tiên (key "json") và sau đó phần text mindmap (key "text") dưới định dạng JSON duy nhất. Cấu trúc JSON cần có:
 {
-  "title": "Chủ đề",
-  "nodes": [
-    {
-      "label":"Nhóm 1",
-      "children":[ { "label":"A", "children":[ ... ] }, ... ]
-    },
-    ...
-  ]
+  "json": { "title": "...", "nodes": [ { "label":"...", "children":[ ... ] } ] },
+  "text": "• Root\n  - Child A\n    * Sub A1\n..."
 }
-Trả tiếng Việt, chỉ output JSON không giải thích.
-Nội dung:
-${truncated}
-`;
+Trả tiếng Việt. Nội dung:\n\n${truncated}`;
+
       const out = await geminiText(prompt);
-      // try to extract JSON substring
-      const jsonTextMatch = out.match(/(\{[\s\S]*\})/);
-      let jsonText = out;
-      if (jsonTextMatch) jsonText = jsonTextMatch[1];
-      // try parse
-      let parsed = null;
+
+      // try to parse: extract outermost JSON object
+      const match = out.match(/(\{[\s\S]*\})/);
+      if (!match) {
+        return res.json({ success: false, error: "AI không trả JSON. Nội dung trả về: " + out });
+      }
+      const jsonText = match[1];
+      let parsed;
       try {
         parsed = JSON.parse(jsonText);
       } catch (e) {
-        // if parsing fails, return raw text with error note
-        return res.json({ success: false, error: "AI không trả JSON hợp lệ. Nội dung trả về: " + out });
+        return res.json({ success: false, error: "Không parse được JSON từ AI. Output: " + out });
       }
-      return res.json({ success: true, type: "mindmap_json", output: parsed });
+
+      return res.json({ success: true, type: "mindmap_text", output: parsed });
     }
 
-    return res.json({ success: false, error: "Mode không hợp lệ" });
+    // PRIOR mindmap_json mode: AI returns structured JSON (existing flow)
+    if (mode === "mindmap") {
+      const prompt = `Phân tích nội dung sau và trả về CHỈ MỘT JSON mô tả mindmap với format:
+{
+  "title":"...",
+  "nodes":[ { "label":"...","children":[ ... ] } ]
+}
+Trả tiếng Việt, chỉ output JSON. Nội dung:\n\n${truncated}`;
+      const out = await geminiText(prompt);
+      const m = out.match(/(\{[\s\S]*\})/);
+      if (!m) return res.json({ success: false, error: "AI không trả JSON. Output: " + out });
+      try {
+        const parsed = JSON.parse(m[1]);
+        return res.json({ success: true, type: "mindmap_json", output: parsed });
+      } catch (e) {
+        return res.json({ success: false, error: "Không parse JSON mindmap: " + e.message });
+      }
+    }
+
+    return res.json({ success: false, error: "Mode không hợp lệ." });
   } catch (e) {
     console.error("PROCESS ERROR:", e);
     return res.status(500).json({ success: false, error: e.message });
@@ -189,8 +197,5 @@ ${truncated}
 });
 
 app.use("/uploads", express.static(UPLOADS));
-
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
