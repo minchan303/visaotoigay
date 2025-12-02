@@ -1,46 +1,41 @@
 body {
+  background: #eef1ff;
   font-family: Arial;
-  background: #f0f3ff;
-  margin: 0;
-  padding: 20px;
 }
 
 .container {
-  max-width: 800px;
+  width: 60%;
   margin: auto;
-}
-
-.box {
+  margin-top: 40px;
   background: white;
-  padding: 20px;
+  padding: 30px;
   border-radius: 12px;
-  margin-bottom: 20px;
+  box-shadow: 0 0 10px #ccc;
 }
 
-textarea, input, select {
+textarea {
   width: 100%;
-  padding: 10px;
-  margin-top: 10px;
+  height: 180px;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid #999;
+  margin-bottom: 15px;
 }
 
 button {
-  margin-top: 15px;
   width: 100%;
   padding: 12px;
-  font-size: 17px;
-  background: #4e6cff;
+  background: #4169e1;
   color: white;
+  font-size: 18px;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
-.hidden {
-  display: none;
-}
-
-pre {
-  background: #fff;
+#resultBox {
+  margin-top: 20px;
   padding: 15px;
-  border-radius: 10px;
-  white-space: pre-wrap;
+  background: #f6f6f6;
+  border-radius: 6px;
+  min-height: 100px;
 }
