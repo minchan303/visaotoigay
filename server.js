@@ -17,71 +17,78 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// Upload file setup
+// Upload PDF
 const upload = multer({ dest: "uploads/" });
 
-// PDF to text
-async function extractTextPDF(filePath) {
+// Extract text
+async function extractPDF(filePath) {
   const buffer = fs.readFileSync(filePath);
   const data = await pdf(buffer);
   return data.text;
 }
 
-// 🔥 CALL GEMINI v1beta (chỉ cách này luôn chạy được)
+// ----------------------------------------
+// GEMINI v1beta (model: gemini-1.0-pro)
+// ----------------------------------------
 async function callGemini(prompt) {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`;
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [
+          { parts: [{ text: prompt }] }
+        ]
+      })
+    }
+  );
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }]
-    })
-  });
-
-  const json = await response.json();
+  const result = await response.json();
 
   if (!response.ok) {
-    throw new Error(json.error?.message || "Gemini API error");
+    throw new Error(result.error?.message || "Gemini API error");
   }
 
-  return json.candidates[0].content.parts[0].text;
+  return result.candidates[0].content.parts[0].text;
 }
 
-// API main
+// ----------------------------------------
+// API PROCESSING
+// ----------------------------------------
 app.post("/api/process", upload.single("file"), async (req, res) => {
   try {
-    let input = "";
+    let text = "";
 
     if (req.file) {
-      input = await extractTextPDF(req.file.path);
+      text = await extractPDF(req.file.path);
       fs.unlinkSync(req.file.path);
     } else if (req.body.text) {
-      input = req.body.text;
+      text = req.body.text;
     } else if (req.body.url) {
-      input = await fetch(req.body.url).then(r => r.text());
+      text = await fetch(req.body.url).then(r => r.text());
     }
 
-    let type = req.body.type;
+    const type = req.body.type;
     let prompt = "";
 
     switch (type) {
       case "summary":
-        prompt = `Tóm tắt đoạn văn sau:\n${input}`;
+        prompt = `Tóm tắt ngắn gọn:\n${text}`;
         break;
       case "flashcards":
-        prompt = `Tạo flashcards dạng JSON:\n${input}`;
+        prompt = `Tạo flashcards (JSON) từ nội dung:\n${text}`;
         break;
       case "qa":
-        prompt = `Tạo 10 câu hỏi và trả lời từ nội dung:\n${input}`;
+        prompt = `Tạo 10 câu hỏi và câu trả lời từ nội dung:\n${text}`;
         break;
       case "mindmap":
-        prompt = `Tạo mindmap JSON từ nội dung:\n${input}`;
+        prompt = `Tạo mindmap JSON từ:\n${text}`;
         break;
       default:
-        prompt = input;
+        prompt = text;
     }
 
     const output = await callGemini(prompt);
@@ -94,4 +101,4 @@ app.post("/api/process", upload.single("file"), async (req, res) => {
 });
 
 // Start server
-app.listen(3000, () => console.log("🚀 Server chạy tại port 3000"));
+app.listen(3000, () => console.log("🚀 Server chạy port 3000 (gemini-1.0-pro)"));
