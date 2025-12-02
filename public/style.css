@@ -1,11 +1,9 @@
-body { background:#eef4ff; font-family: Arial, sans-serif; margin:0; padding:24px; }
-.container { max-width:980px; margin: auto; }
-h1 { margin-bottom:12px; }
-.card { background:#fff; padding:16px; border-radius:10px; box-shadow: 0 6px 20px rgba(20,20,60,0.06); }
-.controls label { display:block; margin-bottom:8px; }
+body { background:#eef4ff; font-family:Arial, sans-serif; margin:0; padding:24px; }
+.container { max-width:980px; margin:auto; }
+.card { background:#fff; padding:16px; border-radius:10px; box-shadow:0 6px 20px rgba(20,20,60,0.06); margin-bottom:12px; }
 textarea { width:100%; min-height:160px; padding:10px; border-radius:6px; border:1px solid #ddd; resize:vertical; }
 .row { display:flex; gap:12px; margin-top:10px; align-items:center; }
 button { background:#3b6cff; color:#fff; border:0; padding:10px 14px; border-radius:8px; cursor:pointer; }
 .muted { color:#666; margin-top:8px; }
 .result { margin-top:12px; background:#fff; padding:16px; border-radius:8px; min-height:180px; box-shadow:0 4px 12px rgba(10,10,30,0.04); }
-.mermaid { width:100%; }
+
