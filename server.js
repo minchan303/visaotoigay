@@ -10,6 +10,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "30mb" }));
 
+// Serve frontend
 const __dirname = path.resolve();
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -20,44 +21,40 @@ app.get("/", (req, res) => {
 // Upload PDF
 const upload = multer({ dest: "uploads/" });
 
-// Extract text
 async function extractPDF(filePath) {
   const buffer = fs.readFileSync(filePath);
   const data = await pdf(buffer);
   return data.text;
 }
 
-// ----------------------------------------
-// GEMINI v1beta (model: gemini-1.0-pro)
-// ----------------------------------------
+// CALL GEMINI 1.0 PRO — CHUẨN 100%
 async function callGemini(prompt) {
   const apiKey = process.env.GEMINI_API_KEY;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [
-          { parts: [{ text: prompt }] }
-        ]
-      })
-    }
-  );
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`;
 
-  const result = await response.json();
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [{ text: prompt }]
+        }
+      ]
+    })
+  });
+
+  const json = await response.json();
 
   if (!response.ok) {
-    throw new Error(result.error?.message || "Gemini API error");
+    throw new Error(json.error?.message || "Gemini API Error");
   }
 
-  return result.candidates[0].content.parts[0].text;
+  return json.candidates[0].content.parts[0].text;
 }
 
-// ----------------------------------------
-// API PROCESSING
-// ----------------------------------------
+// API
 app.post("/api/process", upload.single("file"), async (req, res) => {
   try {
     let text = "";
@@ -71,22 +68,26 @@ app.post("/api/process", upload.single("file"), async (req, res) => {
       text = await fetch(req.body.url).then(r => r.text());
     }
 
-    const type = req.body.type;
+    let type = req.body.type;
     let prompt = "";
 
     switch (type) {
       case "summary":
-        prompt = `Tóm tắt ngắn gọn:\n${text}`;
+        prompt = `Tóm tắt ngắn gọn đoạn sau:\n${text}`;
         break;
+
       case "flashcards":
-        prompt = `Tạo flashcards (JSON) từ nội dung:\n${text}`;
+        prompt = `Tạo flashcards ở dạng JSON từ đoạn sau:\n${text}`;
         break;
+
       case "qa":
-        prompt = `Tạo 10 câu hỏi và câu trả lời từ nội dung:\n${text}`;
+        prompt = `Tạo 10 câu hỏi và trả lời từ nội dung:\n${text}`;
         break;
+
       case "mindmap":
-        prompt = `Tạo mindmap JSON từ:\n${text}`;
+        prompt = `Tạo mindmap JSON từ nội dung:\n${text}`;
         break;
+
       default:
         prompt = text;
     }
@@ -100,5 +101,6 @@ app.post("/api/process", upload.single("file"), async (req, res) => {
   }
 });
 
-// Start server
-app.listen(3000, () => console.log("🚀 Server chạy port 3000 (gemini-1.0-pro)"));
+app.listen(3000, () =>
+  console.log("🚀 Server chạy trên port 3000 — Gemini 1.0 Pro ready")
+);
