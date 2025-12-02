@@ -1,6 +1,6 @@
 mermaid.initialize({ startOnLoad: false });
 
-const $ = (id) => document.getElementById(id);
+const $ = id => document.getElementById(id);
 const modeEl = $("mode");
 const textEl = $("text");
 const fileEl = $("file");
@@ -12,8 +12,17 @@ const generateBtn = $("generateBtn");
 const resultEl = $("result");
 const exportPngBtn = $("exportPngBtn");
 
-let lastMindmapSvg = ""; // for export
+const imgFileEl = $("imgFile");
+const ocrBtn = $("ocrBtn");
+const ocrStatus = $("ocrStatus");
 
+const newTitleEl = $("newTitle");
+const setTitleBtn = $("setTitleBtn");
+const appTitleEl = $("appTitle");
+
+let lastMindmapSvg = "";
+
+// helper
 async function postJSON(path, data) {
   const r = await fetch(path, {
     method: "POST",
@@ -23,6 +32,7 @@ async function postJSON(path, data) {
   return r.json();
 }
 
+// upload file
 uploadBtn.addEventListener("click", async () => {
   const f = fileEl.files[0];
   if (!f) return alert("Chọn file trước");
@@ -43,6 +53,7 @@ uploadBtn.addEventListener("click", async () => {
   }
 });
 
+// fetch URL generate
 fetchBtn.addEventListener("click", async () => {
   const u = urlEl.value.trim();
   if (!u) return alert("Nhập URL");
@@ -51,36 +62,57 @@ fetchBtn.addEventListener("click", async () => {
   handleResponse(j);
 });
 
+// generate from text
 generateBtn.addEventListener("click", async () => {
-  const inputType = "text";
   const txt = textEl.value.trim();
   if (!txt) return alert("Nhập văn bản hoặc upload file/URL");
   setLoading(true);
-  const j = await postJSON("/api/process", { inputType, text: txt, mode: modeEl.value });
+  const j = await postJSON("/api/process", { inputType: "text", text: txt, mode: modeEl.value });
   handleResponse(j);
 });
 
-function setLoading(isLoading) {
-  generateBtn.disabled = isLoading;
-  fetchBtn.disabled = isLoading;
-  uploadBtn.disabled = isLoading;
-  exportPngBtn.style.display = "none";
-  resultEl.innerHTML = isLoading ? "⏳ Đang xử lý..." : "";
-}
+// OCR image using Tesseract.js in browser
+ocrBtn.addEventListener("click", async () => {
+  const f = imgFileEl.files[0];
+  if (!f) return alert("Choose an image file first");
+  ocrStatus.textContent = "OCR in progress...";
+  setLoading(true);
+  try {
+    const { createWorker } = Tesseract;
+    const worker = createWorker({ logger: m => {
+      // console.log(m);
+      ocrStatus.textContent = `OCR: ${Math.round((m.progress||0)*100)}% ${m.status||''}`;
+    }});
+    await worker.load();
+    await worker.loadLanguage('eng+vie'); // try english + vietnamese
+    await worker.initialize('eng+vie');
+    const { data: { text } } = await worker.recognize(f);
+    await worker.terminate();
+    textEl.value = (textEl.value ? (textEl.value + "\n\n" + text) : text).slice(0, 20000);
+    ocrStatus.textContent = "OCR done. Extracted text inserted into textarea.";
+  } catch (e) {
+    console.error("OCR error", e);
+    ocrStatus.textContent = "OCR failed: " + e.message;
+  } finally {
+    setLoading(false);
+  }
+});
 
+// handle response
 function handleResponse(j) {
   setLoading(false);
   if (!j) {
-    resultEl.innerText = "No response";
+    resultEl.textContent = "No response";
     return;
   }
   if (!j.success) {
-    resultEl.innerText = "❌ " + (j.error || "Unknown error");
+    resultEl.textContent = "❌ " + (j.error || "Unknown error");
     return;
   }
 
   if (j.type === "text") {
-    resultEl.innerText = j.output;
+    resultEl.textContent = j.output;
+    exportPngBtn.style.display = "none";
     return;
   }
 
@@ -89,71 +121,68 @@ function handleResponse(j) {
     return;
   }
 
+  if (j.type === "mindmap_text") {
+    // j.output has { json: {...}, text: "• ..." }
+    const html = `<h3>${escapeHtml(j.output.json?.title || "Mindmap")}</h3>
+<pre style="white-space:pre-wrap;">${escapeHtml(j.output.text || '')}</pre>`;
+    resultEl.innerHTML = html;
+    exportPngBtn.style.display = "none";
+    return;
+  }
+
   // fallback
-  resultEl.innerText = JSON.stringify(j);
+  resultEl.textContent = JSON.stringify(j);
 }
 
-// Render mindmap JSON (expects {title, nodes: [{label, children: [...]}]})
+// render mindmap json -> mermaid flowchart & show export button
 function renderMindmapFromJson(data) {
   try {
-    // build mermaid graph (flowchart with hierarchical edges)
-    // We'll give each node an ID; traverse tree
     let idCounter = 0;
-    function newId() { idCounter += 1; return 'N' + idCounter; }
-
-    const lines = [];
+    function newId(){ idCounter++; return 'N' + idCounter; }
     const nodes = [];
-
-    function walk(node, parentId = null) {
+    const edges = [];
+    function walk(node, parentId){
       const id = newId();
-      const label = (node.label || node.name || "").replace(/["]/g, '\\"');
+      const label = (node.label || node.name || '').replace(/"/g, '\\"');
       nodes.push(`${id}["${label}"]`);
-      if (parentId) lines.push(`${parentId} --> ${id}`);
-      if (node.children && Array.isArray(node.children)) {
-        node.children.forEach(child => walk(child, id));
+      if (parentId) edges.push(`${parentId} --> ${id}`);
+      if (node.children && Array.isArray(node.children)){
+        node.children.forEach(c => walk(c, id));
       }
-      return id;
     }
-
     const rootId = newId();
-    const title = (data.title || "Mindmap").replace(/["]/g, '\\"');
+    const title = (data.title || 'Mindmap').replace(/"/g, '\\"');
     nodes.push(`${rootId}["${title}"]`);
-    if (Array.isArray(data.nodes)) {
-      data.nodes.forEach(n => {
-        const childId = walk(n, rootId);
-      });
-    }
+    if (Array.isArray(data.nodes)) data.nodes.forEach(n => walk(n, rootId));
 
-    const mermaidText = `flowchart TB\n${nodes.join("\n")}\n${lines.join("\n")}`;
-    // render with mermaid - use mermaid.mermaidAPI.render
-    const insertId = "mermaid-" + Date.now();
+    const mermaidText = `flowchart TB\n${nodes.join('\n')}\n${edges.join('\n')}`;
+    const insertId = 'mermaid-'+Date.now();
     mermaid.mermaidAPI.render(insertId, mermaidText, (svgCode) => {
       resultEl.innerHTML = svgCode;
       lastMindmapSvg = svgCode;
       exportPngBtn.style.display = "inline-block";
     }, resultEl);
   } catch (e) {
-    resultEl.innerText = "Render error: " + e.message;
+    resultEl.textContent = "Render error: " + e.message;
   }
 }
 
-// Export current SVG (lastMindmapSvg) to PNG and download
-exportPngBtn.addEventListener("click", async () => {
+// Export svg to png
+exportPngBtn.addEventListener("click", () => {
   if (!lastMindmapSvg) return alert("Không có mindmap để xuất.");
-  // convert svg string to image
   const svg = lastMindmapSvg;
   const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
   const url = URL.createObjectURL(svgBlob);
   const img = new Image();
   img.onload = () => {
     const canvas = document.createElement("canvas");
-    const scale = 2; // increase resolution
+    const scale = 2;
     canvas.width = img.width * scale;
     canvas.height = img.height * scale;
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0,0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
@@ -164,9 +193,40 @@ exportPngBtn.addEventListener("click", async () => {
       URL.revokeObjectURL(url);
     }, "image/png");
   };
-  img.onerror = (e) => {
+  img.onerror = () => {
     alert("Không thể chuyển SVG sang PNG.");
     URL.revokeObjectURL(url);
   };
   img.src = url;
 });
+
+// set title safely (block offensive content)
+setTitleBtn.addEventListener("click", () => {
+  const newTitle = newTitleEl.value.trim();
+  if (!newTitle) return alert("Nhập tiêu đề mới");
+  // simple check: block words that are slurs (basic)
+  const lowered = newTitle.toLowerCase();
+  const blocked = ["gay", "slur-example"]; // blocked list - expand as needed
+  for (const b of blocked) {
+    if (lowered.includes(b)) {
+      return alert("Tiêu đề chứa từ không phù hợp. Vui lòng chọn tiêu đề khác.");
+    }
+  }
+  appTitleEl.textContent = newTitle;
+  newTitleEl.value = "";
+});
+
+// ui helpers
+function setLoading(isLoading) {
+  generateBtn.disabled = isLoading;
+  fetchBtn.disabled = isLoading;
+  uploadBtn.disabled = isLoading;
+  ocrBtn.disabled = isLoading;
+  exportPngBtn.style.display = "none";
+  resultEl.innerHTML = isLoading ? "⏳ Đang xử lý..." : "";
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/[&<>"'`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'})[c]);
+}
