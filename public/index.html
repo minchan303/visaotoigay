@@ -2,22 +2,22 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>AI Study Assistant</title>
+  <title>AI Chatbot</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
   <div class="container">
-    <h1>AI Chatbot</h1>
+    <h1>AI Chatbot (Gemini)</h1>
 
-    <div class="card">
+    <div class="box">
       <label><input type="radio" name="mode" value="text" checked> Paste text</label>
       <label><input type="radio" name="mode" value="file"> Upload file</label>
       <label><input type="radio" name="mode" value="url"> URL</label>
 
       <textarea id="textInput" placeholder="Nhập nội dung..."></textarea>
       <input id="fileInput" type="file" class="hidden" />
-      <input id="urlInput" type="text" class="hidden" placeholder="Nhập URL..." />
+      <input id="urlInput" type="text" placeholder="Nhập URL..." class="hidden" />
 
       <select id="task">
         <option value="summary">Tóm tắt</option>
@@ -33,81 +33,6 @@
     <pre id="output"></pre>
   </div>
 
-<script>
-/* =======================
-   FRONT-END WORKING CODE
-   ======================= */
-
-const modeRadios = document.querySelectorAll("input[name='mode']");
-const textInput  = document.getElementById("textInput");
-const fileInput  = document.getElementById("fileInput");
-const urlInput   = document.getElementById("urlInput");
-const output     = document.getElementById("output");
-const taskSelect = document.getElementById("task");
-const btn        = document.getElementById("generate");
-
-/* ======== SWITCH MODE UI ======== */
-modeRadios.forEach(r => {
-  r.addEventListener("change", () => {
-    const mode = document.querySelector("input[name='mode']:checked").value;
-
-    textInput.classList.add("hidden");
-    fileInput.classList.add("hidden");
-    urlInput.classList.add("hidden");
-
-    if (mode === "text") textInput.classList.remove("hidden");
-    if (mode === "file") fileInput.classList.remove("hidden");
-    if (mode === "url")  urlInput.classList.remove("hidden");
-  });
-});
-
-/* ======== SEND REQUEST ======== */
-btn.addEventListener("click", async () => {
-  const mode = document.querySelector("input[name='mode']:checked").value;
-  const task = taskSelect.value;
-
-  output.textContent = "Đang xử lý...";
-
-  try {
-    let data;
-
-    if (mode === "text") {
-      const text = textInput.value.trim();
-      if (!text) return alert("Bạn chưa nhập text!");
-      data = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputType: "text", text, type: task })
-      });
-
-    } else if (mode === "url") {
-      const url = urlInput.value.trim();
-      if (!url) return alert("Bạn chưa nhập URL!");
-      data = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inputType: "url", url, type: task })
-      });
-
-    } else if (mode === "file") {
-      if (!fileInput.files[0]) return alert("Bạn chưa chọn file!");
-      const form = new FormData();
-      form.append("file", fileInput.files[0]);
-      form.append("type", task);
-
-      data = await fetch("/api/process", { method: "POST", body: form });
-    }
-
-    const res = await data.json();
-
-    if (res.error) output.textContent = "❌ ERROR: " + res.error;
-    else output.textContent = res.output || JSON.stringify(res, null, 2);
-
-  } catch (e) {
-    output.textContent = "❌ Lỗi kết nối: " + e.message;
-  }
-});
-</script>
-
+  <script src="script.js"></script>
 </body>
 </html>
