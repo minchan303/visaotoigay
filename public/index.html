@@ -2,55 +2,29 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>AI Chatbot (Gemini 1.0 Pro)</title>
-  <style>
-    body { font-family: Arial; background: #eef2ff; padding: 40px; }
-    .box { max-width: 900px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; }
-    textarea { width: 100%; height: 150px; margin-bottom: 10px; }
-    button { width: 100%; padding: 15px; background: #4169e1; color: #fff; border: none; font-size: 20px; border-radius: 8px; }
-    #result { background: #fafafa; padding: 20px; margin-top: 20px; border-radius: 10px; white-space: pre-wrap; }
-  </style>
+  <title>Gemini 2.0 Flash Chatbot</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div class="box">
-    <h2>AI Chatbot (Gemini 1.0 Pro)</h2>
-    <textarea id="input"></textarea>
 
-    <select id="type">
-      <option value="summary">Tóm tắt</option>
-      <option value="flashcards">Flashcards</option>
-      <option value="qa">Q&A</option>
-      <option value="mindmap">Mindmap</option>
+  <div class="container">
+    <h1>AI Chatbot (Gemini 2.0 Flash)</h1>
+
+    <textarea id="inputText" placeholder="Nhập văn bản tại đây..."></textarea>
+
+    <select id="mode">
+      <option value="Tóm tắt">Tóm tắt</option>
+      <option value="Giải thích">Giải thích</option>
+      <option value="Viết lại">Viết lại</option>
+      <option value="Rút ý chính">Rút ý chính</option>
     </select>
 
-    <br><br>
-    <button onclick="generate()">Generate</button>
+    <button id="generateBtn">Generate</button>
 
-    <h3>Kết quả</h3>
-    <div id="result"></div>
+    <h2>Kết quả</h2>
+    <div id="resultBox"></div>
   </div>
 
-  <script>
-    async function generate() {
-      document.getElementById("result").textContent = "⏳ Đang xử lý...";
-
-      const text = document.getElementById("input").value;
-      const type = document.getElementById("type").value;
-
-      const res = await fetch("/api/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, type })
-      });
-
-      const data = await res.json();
-
-      if (data.success) {
-        document.getElementById("result").textContent = data.output;
-      } else {
-        document.getElementById("result").textContent = "❌ " + data.error;
-      }
-    }
-  </script>
+  <script src="script.js"></script>
 </body>
 </html>
