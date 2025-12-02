@@ -113,4 +113,46 @@ app.post("/api/process", async (req, res) => {
     // INPUT: FILE
     if (inputType === "file") {
       const filename = fileUrl.split("/").pop();
-      con
+      const filePath = path.join(UPLOADS, filename);
+      const ext = path.extname(filename).toLowerCase();
+      content = await extractText(filePath, ext);
+    }
+
+    // ---------- AI MODES ----------
+    if (mode === "summary") {
+      const prompt = `Tóm tắt nội dung sau bằng tiếng Việt:\n\n${content}`;
+      const output = await geminiText(prompt);
+      return res.json({ success: true, output, type: "text" });
+    }
+
+    if (mode === "flashcards") {
+      const prompt = `Tạo flashcards JSON (mảng {q,a}) từ nội dung sau:\n\n${content}`;
+      const output = await geminiText(prompt);
+      return res.json({ success: true, output, type: "text" });
+    }
+
+    if (mode === "qa") {
+      const prompt = `Tạo danh sách câu hỏi và trả lời JSON từ nội dung sau:\n\n${content}`;
+      const output = await geminiText(prompt);
+      return res.json({ success: true, output, type: "text" });
+    }
+
+    if (mode === "mindmap") {
+      const imgPrompt = createMindmapImagePrompt(content);
+      const base64 = await geminiImage(imgPrompt);
+
+      return res.json({
+        success: true,
+        type: "image",
+        image: `data:image/png;base64,${base64}`
+      });
+    }
+
+  } catch (e) {
+    res.json({ success: false, error: e.message });
+  }
+});
+
+app.use("/uploads", express.static(UPLOADS));
+
+app.listen(3000, () => console.log("Server running on port 3000"));
