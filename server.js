@@ -22,7 +22,7 @@ app.get("/", (req, res) => {
 
 // Gemini API
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
 
 // Upload file
 const upload = multer({ dest: "uploads/" });
@@ -89,3 +89,4 @@ app.post("/api/process", upload.single("file"), async (req, res) => {
 app.listen(3000, () => {
   console.log("Server chạy trên port 3000");
 });
+
