@@ -21,13 +21,14 @@ if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
 
 const upload = multer({ dest: UPLOADS });
 
+// ================= Gemini INIT =================
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 const MAX_TEXT = 18000;
 const CLEAN_HTML = (html) =>
   sanitizeHtml(html, { allowedTags: [] }).replace(/\s+/g, " ").trim();
 
-// ===== Extract text =====
+// ================= FILE EXTRACT =================
 async function extractText(filePath, ext) {
   try {
     if (ext === ".pdf") {
@@ -42,40 +43,57 @@ async function extractText(filePath, ext) {
       return fs.readFileSync(filePath, "utf8");
     }
     return "";
-  } catch (e) {
+  } catch {
     return "";
   }
 }
 
-// ===== Gemini text =====
+// ================= GEMINI TEXT =================
 async function geminiText(prompt) {
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: "models/gemini-2.0-flash",
   });
 
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
 
-// ===== Gemini mindmap =====
+
+// ================= GEMINI IMAGE (MINDMAP) =================
+// Google Gemini ONLY supports image generation via generateContent()
+// with responseMimeType = "image/png"
 async function geminiMindmap(content) {
-  const prompt = `
-Tạo một mindmap hình ảnh rõ ràng, đẹp, gọn, chỉ 1 hình PNG. Nội dung:
-${content}`;
-
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash-image",
+    model: "models/gemini-2.0-flash",
   });
 
-  const result = await model.generateImage({
-    prompt,
-    size: "1024x1024",
+  const prompt = `
+Tạo mindmap dạng hình ảnh (PNG), đẹp, rõ ràng. Chỉ trả về ảnh.
+Nội dung cần tạo mindmap:
+${content}
+`;
+
+  const result = await model.generateContent({
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "image/png",
+    },
   });
 
-  return result.images[0].data;
+  // Result trả về dưới dạng base64
+  const base64 = result.response.candidates[0].content.parts[0].inlineData.data;
+
+  return base64;
 }
 
-// ===== Upload file =====
+
+
+// ================= UPLOAD FILE =================
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     const ext = path.extname(req.file.originalname).toLowerCase();
@@ -85,24 +103,26 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     const text = await extractText(newPath, ext);
     const publicUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}${ext}`;
 
-    return res.json({
+    res.json({
       success: true,
       fileUrl: publicUrl,
       extractedText: text,
     });
   } catch (e) {
-    return res.json({ success: false, error: e.message });
+    res.json({ success: false, error: e.message });
   }
 });
 
-// ===== Main process =====
+// ================= MAIN PROCESS =================
 app.post("/api/process", async (req, res) => {
   try {
     let { mode, inputType, text, url, fileUrl } = req.body;
     let content = "";
 
+    // TEXT mode
     if (inputType === "text") content = text || "";
 
+    // URL mode
     if (inputType === "url") {
       try {
         const raw = await fetch(url).then((r) => r.text());
@@ -110,11 +130,12 @@ app.post("/api/process", async (req, res) => {
       } catch {
         return res.json({
           success: false,
-          error: "Không thể fetch URL.",
+          error: "Không thể lấy dữ liệu từ URL.",
         });
       }
     }
 
+    // FILE mode
     if (inputType === "file") {
       const filename = fileUrl.split("/").pop();
       const filePath = path.join(UPLOADS, filename);
@@ -122,34 +143,36 @@ app.post("/api/process", async (req, res) => {
       content = await extractText(filePath, ext);
     }
 
+    // Validate
     if (!content.trim()) {
-      return res.json({ success: false, error: "Không có nội dung." });
+      return res.json({ success: false, error: "Không có nội dung hợp lệ." });
     }
 
-    content = content.slice(0, MAX_TEXT); // speed boost
+    content = content.slice(0, MAX_TEXT);
 
-    // ===== MODE: Summary =====
+    // ===== SUMMARY =====
     if (mode === "summary") {
-      const prompt = `Tóm tắt văn bản sau: ${content}`;
-      const output = await geminiText(prompt);
+      const output = await geminiText(`Tóm tắt nội dung sau:\n${content}`);
       return res.json({ success: true, type: "text", output });
     }
 
-    // ===== MODE: Flashcards =====
+    // ===== FLASHCARDS =====
     if (mode === "flashcards") {
-      const prompt = `Tạo flashcards dạng JSON [{q, a}] dựa trên nội dung sau: ${content}`;
-      const output = await geminiText(prompt);
+      const output = await geminiText(
+        `Tạo flashcards dạng JSON [{q, a}] từ nội dung sau:\n${content}`
+      );
       return res.json({ success: true, type: "text", output });
     }
 
-    // ===== MODE: Q&A =====
+    // ===== Q&A =====
     if (mode === "qa") {
-      const prompt = `Tạo danh sách Q&A dạng JSON [{q, a}] dựa trên nội dung sau: ${content}`;
-      const output = await geminiText(prompt);
+      const output = await geminiText(
+        `Tạo danh sách Q&A dạng JSON [{q, a}] từ nội dung sau:\n${content}`
+      );
       return res.json({ success: true, type: "text", output });
     }
 
-    // ===== MODE: Mindmap (image) =====
+    // ===== MINDMAP IMAGE =====
     if (mode === "mindmap") {
       const base64 = await geminiMindmap(content);
       return res.json({
@@ -161,12 +184,15 @@ app.post("/api/process", async (req, res) => {
 
     return res.json({ success: false, error: "Mode không hợp lệ." });
   } catch (e) {
-    console.error(e);
-    return res.json({ success: false, error: e.message });
+    console.error("SERVER ERROR:", e);
+    res.json({ success: false, error: e.message });
   }
 });
 
-// Static
+
+// ================= STATIC =================
 app.use("/uploads", express.static("uploads"));
 
-app.listen(3000, () => console.log("🚀 Server chạy trên port 3000"));
+app.listen(3000, () =>
+  console.log("🚀 Gemini Chatbot server running on port 3000")
+);
