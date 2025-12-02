@@ -19,180 +19,178 @@ const __dirname = path.resolve();
 const UPLOADS = path.join(__dirname, "uploads");
 if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
 
-const upload = multer({ dest: UPLOADS });
+// multer
+const upload = multer({ dest: UPLOADS, limits: { fileSize: 20 * 1024 * 1024 } });
 
-// ================= Gemini INIT =================
+// Init Gemini client (use AI Studio API key in Render env var)
+if (!process.env.GEMINI_API_KEY) {
+  console.warn("WARNING: GEMINI_API_KEY not set in environment variables.");
+}
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const MAX_TEXT = 18000;
+// helpers
 const CLEAN_HTML = (html) =>
-  sanitizeHtml(html, { allowedTags: [] }).replace(/\s+/g, " ").trim();
+  sanitizeHtml(html || "", { allowedTags: [] }).replace(/\s+/g, " ").trim();
 
-// ================= FILE EXTRACT =================
 async function extractText(filePath, ext) {
+  ext = ext.toLowerCase();
   try {
     if (ext === ".pdf") {
       const data = await pdf(fs.readFileSync(filePath));
       return data.text || "";
     }
-    if (ext === ".docx") {
-      const result = await mammoth.extractRawText({ path: filePath });
-      return result.value || "";
+    if (ext === ".docx" || ext === ".doc") {
+      const r = await mammoth.extractRawText({ path: filePath });
+      return r.value || "";
     }
     if (ext === ".txt") {
       return fs.readFileSync(filePath, "utf8");
     }
-    return "";
-  } catch {
-    return "";
+  } catch (e) {
+    console.error("extractText error:", e);
   }
+  return "";
 }
 
-// ================= GEMINI TEXT =================
+// call Gemini text
 async function geminiText(prompt) {
-  const model = genAI.getGenerativeModel({
-    model: "models/gemini-2.0-flash",
-  });
-
-  const result = await model.generateContent(prompt);
-  return result.response.text();
-}
-
-
-// ================= GEMINI IMAGE (MINDMAP) =================
-// Google Gemini ONLY supports image generation via generateContent()
-// with responseMimeType = "image/png"
-async function geminiMindmap(content) {
-  const model = genAI.getGenerativeModel({
-    model: "models/gemini-2.0-flash",
-  });
-
-  const prompt = `
-Tạo mindmap dạng hình ảnh (PNG), đẹp, rõ ràng. Chỉ trả về ảnh.
-Nội dung cần tạo mindmap:
-${content}
-`;
-
+  const model = genAI.getGenerativeModel({ model: "models/gemini-2.0-flash" });
   const result = await model.generateContent({
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
-    generationConfig: {
-      responseMimeType: "image/png",
-    },
+    contents: [{ parts: [{ text: prompt }] }]
   });
-
-  // Result trả về dưới dạng base64
-  const base64 = result.response.candidates[0].content.parts[0].inlineData.data;
-
-  return base64;
+  // try to extract text
+  if (typeof result.response?.text === "function") {
+    return await result.response.text();
+  }
+  if (result.response?.text) return result.response.text;
+  // fallback to candidates
+  const cand = result.response?.candidates?.[0]?.content?.[0]?.text;
+  if (cand) return cand;
+  return JSON.stringify(result);
 }
 
-
-
-// ================= UPLOAD FILE =================
+// upload endpoint
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
-    const ext = path.extname(req.file.originalname).toLowerCase();
-    const newPath = req.file.path + ext;
+    if (!req.file) return res.status(400).json({ success: false, error: "No file" });
+    const orig = req.file.originalname || "file";
+    const ext = path.extname(orig) || "";
+    const newFilename = req.file.filename + ext;
+    const newPath = path.join(UPLOADS, newFilename);
     fs.renameSync(req.file.path, newPath);
 
-    const text = await extractText(newPath, ext);
-    const publicUrl = `${req.protocol}://${req.get("host")}/uploads/${req.file.filename}${ext}`;
+    const extractedText = await extractText(newPath, ext);
+    const publicUrl = `${req.protocol}://${req.get("host")}/uploads/${encodeURIComponent(newFilename)}`;
 
-    res.json({
-      success: true,
-      fileUrl: publicUrl,
-      extractedText: text,
-    });
+    res.json({ success: true, fileUrl: publicUrl, extractedText });
   } catch (e) {
-    res.json({ success: false, error: e.message });
+    console.error("upload error:", e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
-// ================= MAIN PROCESS =================
+// process endpoint
 app.post("/api/process", async (req, res) => {
   try {
-    let { mode, inputType, text, url, fileUrl } = req.body;
+    const { inputType, text, url, fileUrl, mode } = req.body;
     let content = "";
 
-    // TEXT mode
-    if (inputType === "text") content = text || "";
-
-    // URL mode
-    if (inputType === "url") {
-      try {
-        const raw = await fetch(url).then((r) => r.text());
-        content = CLEAN_HTML(raw);
-      } catch {
-        return res.json({
-          success: false,
-          error: "Không thể lấy dữ liệu từ URL.",
-        });
+    if (inputType === "text") {
+      content = text || "";
+    } else if (inputType === "url") {
+      if (!url || (!url.startsWith("http://") && !url.startsWith("https://"))) {
+        return res.json({ success: false, error: "URL không hợp lệ. Phải bắt đầu bằng http/https." });
       }
-    }
-
-    // FILE mode
-    if (inputType === "file") {
-      const filename = fileUrl.split("/").pop();
+      try {
+        const r = await fetch(url, { timeout: 15000 });
+        if (!r.ok) return res.json({ success: false, error: `Fetch URL trả mã ${r.status}` });
+        const html = await r.text();
+        content = CLEAN_HTML(html);
+      } catch (e) {
+        console.error("fetch url error:", e);
+        return res.json({ success: false, error: "Không thể fetch URL (bị chặn hoặc timeout)." });
+      }
+    } else if (inputType === "file") {
+      if (!fileUrl) return res.json({ success: false, error: "Missing fileUrl" });
+      const filename = decodeURIComponent(fileUrl.split("/").pop());
       const filePath = path.join(UPLOADS, filename);
+      if (!fs.existsSync(filePath)) return res.json({ success: false, error: "Uploaded file not found" });
       const ext = path.extname(filename);
       content = await extractText(filePath, ext);
+    } else {
+      return res.json({ success: false, error: "Invalid inputType" });
     }
 
-    // Validate
-    if (!content.trim()) {
-      return res.json({ success: false, error: "Không có nội dung hợp lệ." });
+    if (!content || content.trim().length === 0) {
+      return res.json({ success: false, error: "Không có nội dung để xử lý" });
     }
 
-    content = content.slice(0, MAX_TEXT);
+    // truncate to keep requests small & fast
+    const MAX = 18000;
+    const truncated = content.slice(0, MAX);
 
-    // ===== SUMMARY =====
+    // Mode handlers
     if (mode === "summary") {
-      const output = await geminiText(`Tóm tắt nội dung sau:\n${content}`);
-      return res.json({ success: true, type: "text", output });
+      const prompt = `Tóm tắt ngắn gọn bằng tiếng Việt (cô đọng) nội dung sau:\n\n${truncated}`;
+      const out = await geminiText(prompt);
+      return res.json({ success: true, type: "text", output: out });
     }
 
-    // ===== FLASHCARDS =====
     if (mode === "flashcards") {
-      const output = await geminiText(
-        `Tạo flashcards dạng JSON [{q, a}] từ nội dung sau:\n${content}`
-      );
-      return res.json({ success: true, type: "text", output });
+      const prompt = `Tạo flashcards dưới dạng JSON array of {"q","a"} từ nội dung sau (tiếng Việt). Chỉ trả JSON:\n\n${truncated}`;
+      const out = await geminiText(prompt);
+      return res.json({ success: true, type: "text", output: out });
     }
 
-    // ===== Q&A =====
     if (mode === "qa") {
-      const output = await geminiText(
-        `Tạo danh sách Q&A dạng JSON [{q, a}] từ nội dung sau:\n${content}`
-      );
-      return res.json({ success: true, type: "text", output });
+      const prompt = `Tạo danh sách câu hỏi và trả lời (JSON array of {"q","a"}) từ nội dung sau (tiếng Việt). Chỉ trả JSON:\n\n${truncated}`;
+      const out = await geminiText(prompt);
+      return res.json({ success: true, type: "text", output: out });
     }
 
-    // ===== MINDMAP IMAGE =====
     if (mode === "mindmap") {
-      const base64 = await geminiMindmap(content);
-      return res.json({
-        success: true,
-        type: "image",
-        image: "data:image/png;base64," + base64,
-      });
+      // Ask AI to produce a clean JSON mindmap structure only
+      const prompt = `Phân tích nội dung sau và trả về CHỈ MỘT JSON mô tả mindmap với format:
+{
+  "title": "Chủ đề",
+  "nodes": [
+    {
+      "label":"Nhóm 1",
+      "children":[ { "label":"A", "children":[ ... ] }, ... ]
+    },
+    ...
+  ]
+}
+Trả tiếng Việt, chỉ output JSON không giải thích.
+Nội dung:
+${truncated}
+`;
+      const out = await geminiText(prompt);
+      // try to extract JSON substring
+      const jsonTextMatch = out.match(/(\{[\s\S]*\})/);
+      let jsonText = out;
+      if (jsonTextMatch) jsonText = jsonTextMatch[1];
+      // try parse
+      let parsed = null;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (e) {
+        // if parsing fails, return raw text with error note
+        return res.json({ success: false, error: "AI không trả JSON hợp lệ. Nội dung trả về: " + out });
+      }
+      return res.json({ success: true, type: "mindmap_json", output: parsed });
     }
 
-    return res.json({ success: false, error: "Mode không hợp lệ." });
+    return res.json({ success: false, error: "Mode không hợp lệ" });
   } catch (e) {
-    console.error("SERVER ERROR:", e);
-    res.json({ success: false, error: e.message });
+    console.error("PROCESS ERROR:", e);
+    return res.status(500).json({ success: false, error: e.message });
   }
 });
 
+app.use("/uploads", express.static(UPLOADS));
 
-// ================= STATIC =================
-app.use("/uploads", express.static("uploads"));
-
-app.listen(3000, () =>
-  console.log("🚀 Gemini Chatbot server running on port 3000")
-);
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
