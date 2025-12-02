@@ -1,41 +1,50 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <title>Gemini AI Chatbot</title>
-  <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <title>AI Chatbot — Mindmap</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- mermaid -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 </head>
 <body>
+  <div class="container">
+    <h1>AI Chatbot – Gemini 2.0 Flash</h1>
 
-<div class="container">
-  <h1>AI Chatbot – Gemini 2.0 Flash</h1>
+    <div class="controls card">
+      <label>Chọn chế độ:
+        <select id="mode">
+          <option value="summary">Tóm tắt</option>
+          <option value="flashcards">Flashcards</option>
+          <option value="qa">Q&A</option>
+          <option value="mindmap">Mindmap (image)</option>
+        </select>
+      </label>
 
-  <select id="mode">
-    <option value="summary">Tóm tắt</option>
-    <option value="flashcards">Flashcards</option>
-    <option value="qa">Q&A</option>
-    <option value="mindmap">Mindmap (Image)</option>
-  </select>
+      <label>Paste text</label>
+      <textarea id="text" placeholder="Dán văn bản..."></textarea>
 
-  <textarea id="textInput" placeholder="Nhập văn bản…"></textarea>
+      <div class="row">
+        <input type="file" id="file" />
+        <button id="uploadBtn">Upload File</button>
+      </div>
+      <div id="uploadInfo" class="muted"></div>
 
-  <div class="section">
-    <input type="file" id="fileInput">
-    <button onclick="uploadFile()">Upload File</button>
-    <div id="fileStatus"></div>
+      <div class="row">
+        <input id="url" placeholder="Dán URL..." />
+        <button id="fetchBtn">Dán URL & Generate</button>
+      </div>
+
+      <div class="row">
+        <button id="generateBtn">Generate</button>
+        <button id="exportPngBtn" style="display:none">Export Mindmap PNG</button>
+      </div>
+    </div>
+
+    <h2>Kết quả</h2>
+    <div id="result" class="result">Kết quả sẽ hiển thị ở đây.</div>
   </div>
 
-  <div class="section">
-    <input type="text" id="urlInput" placeholder="Dán URL…">
-    <button onclick="processURL()">Dán URL & Generate</button>
-  </div>
-
-  <button onclick="processText()">Generate</button>
-
-  <h2>Kết quả</h2>
-  <div id="result"></div>
-</div>
-
-<script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
