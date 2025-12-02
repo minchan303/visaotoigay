@@ -13,36 +13,42 @@
     <div class="card">
 
       <div class="mode">
-        <label><input type="radio" name="mode" value="text" checked> Paste text</label>
-        <label><input type="radio" name="mode" value="file"> Upload file</label>
-        <label><input type="radio" name="mode" value="url"> URL</label>
+        <label><input type="radio" name="inputMode" value="text" checked> Paste text</label>
+        <label><input type="radio" name="inputMode" value="file"> Upload file</label>
+        <label><input type="radio" name="inputMode" value="url"> URL</label>
       </div>
 
-      <textarea id="inputText" placeholder="Dán văn bản vào đây..."></textarea>
+      <!-- text input -->
+      <textarea id="textInput" placeholder="Dán văn bản vào đây..."></textarea>
 
-      <input type="file" id="inputFile" />
+      <!-- file input -->
+      <input type="file" id="fileInput" class="hidden" />
 
-      <input type="text" id="inputURL" placeholder="Dán URL..." />
+      <!-- url input -->
+      <input type="text" id="urlInput" class="hidden" placeholder="Dán URL..." />
 
-      <select id="type">
+      <select id="taskSelect">
         <option value="summary">Tóm tắt</option>
         <option value="mindmap">Mindmap</option>
         <option value="flashcards">Flashcards</option>
         <option value="qa">Q&A</option>
       </select>
 
-      <button onclick="generate()">Generate</button>
+      <div style="margin-top:10px;">
+        <button id="generateBtn">Generate</button>
+        <button id="clearBtn" type="button">Clear</button>
+        <span id="loading" class="hidden" style="margin-left:12px;">Processing...</span>
+      </div>
+
     </div>
 
     <h2>Kết quả</h2>
     <div id="output" class="output"></div>
 
-    <button onclick="copyText()">Copy</button>
-    <button onclick="downloadText()">Download txt</button>
-    <button onclick="exportMindmap()">Export Mindmap PNG</button>
+    <div style="margin-top:10px;">
+      <button id="copyBtn">Copy</button>
+      <button id="downloadBtn">Download txt</button>
+      <button id="exportMindmapBtn" class="hidden">Export Mindmap PNG</button>
+    </div>
 
-  </div>
-
-  <script src="script.js"></script>
-</body>
-</html>
+    <div id="mindmapContainer" class="card hidden" style="min-height:560px;"></div>
