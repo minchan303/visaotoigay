@@ -1,28 +1,50 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8" />
-  <title>Gemini 2.0 Flash Chatbot</title>
+  <meta charset="utf-8" />
+  <title>AI Chatbot (Gemini 2.0 Flash)</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
-  <div class="container">
+  <div class="wrap">
     <h1>AI Chatbot (Gemini 2.0 Flash)</h1>
 
-    <textarea id="inputText" placeholder="Nhập văn bản tại đây..."></textarea>
+    <div class="card">
+      <label class="label">Nhập văn bản</label>
+      <textarea id="textInput" placeholder="Dán văn bản vào đây..."></textarea>
 
-    <select id="mode">
-      <option value="Tóm tắt">Tóm tắt</option>
-      <option value="Giải thích">Giải thích</option>
-      <option value="Viết lại">Viết lại</option>
-      <option value="Rút ý chính">Rút ý chính</option>
-    </select>
+      <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+        <select id="taskSelect">
+          <option value="summary">Tóm tắt</option>
+          <option value="flashcards">Flashcards</option>
+          <option value="qa">Q&A</option>
+          <option value="mindmap">Mindmap</option>
+        </select>
 
-    <button id="generateBtn">Generate</button>
+        <button id="generateBtn">Generate</button>
+      </div>
+
+      <hr />
+
+      <div>
+        <label class="label">Hoặc upload file (PDF / DOCX / TXT)</label>
+        <input type="file" id="fileInput" />
+        <button id="uploadBtn">Upload & Get Link</button>
+        <div id="fileInfo" class="muted"></div>
+      </div>
+
+      <hr />
+
+      <div>
+        <label class="label">Hoặc dán URL (link)</label>
+        <input id="urlInput" placeholder="https://example.com/article" />
+        <button id="fetchUrlBtn">Fetch & Generate</button>
+      </div>
+    </div>
 
     <h2>Kết quả</h2>
-    <div id="resultBox"></div>
+    <div id="resultBox" class="result"></div>
+    <div id="meta" class="muted"></div>
   </div>
 
   <script src="script.js"></script>
