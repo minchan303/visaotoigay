@@ -6,10 +6,7 @@
 
   <link rel="stylesheet" href="style.css" />
 
-  <!-- Mermaid để vẽ mindmap -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-
-  <!-- Chart.js để vẽ biểu đồ nếu dữ liệu là bảng điểm -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -37,16 +34,16 @@
             <input type="file" id="file" />
             <button id="uploadBtn">Upload File</button>
         </div>
-        <div id="uploadInfo" class="muted"></div>
+        <div id="uploadInfo"></div>
 
         <div class="row">
-            <input id="url" placeholder="Dán URL..." style="flex:1;">
+            <input id="url" placeholder="Dán URL..." style="flex:1">
             <button id="fetchBtn">Dán URL & Generate</button>
         </div>
 
         <div class="row">
             <button id="generateBtn">Generate</button>
-            <button id="exportPngBtn" style="display:none;">Export Mindmap PNG</button>
+            <button id="exportPngBtn" style="display:none;">Xuất PNG</button>
         </div>
     </div>
 
