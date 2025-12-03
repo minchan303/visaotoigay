@@ -1,9 +1,11 @@
+// ===============================
+//  IMPORTS
+// ===============================
 import express from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import cors from "cors";
-import fetch from "node-fetch";
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { fileURLToPath } from "url";
@@ -11,16 +13,18 @@ import { dirname } from "path";
 import pdf from "pdf-parse";
 import mammoth from "mammoth";
 import csvParser from "csv-parser";
-import { JSDOM } from "jsdom";
-import { Readable } from "stream";
 import { PDFDocument } from "pdf-lib";
 import { convert } from "html-to-text";
 
-// ------------------------------
+// Node 18+ đã có fetch → KHÔNG import node-fetch
+
+// ===============================
+//  PATH INIT
+// ===============================
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-// ------------------------------
 
+// ===============================
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 app.use(cors());
@@ -28,20 +32,18 @@ app.use(express.static("public"));
 
 const upload = multer({ dest: "uploads/" });
 
-// ------------------------------
+// ===============================
 //  GOOGLE GEMINI
-// ------------------------------
+// ===============================
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-if (!GEMINI_API_KEY) {
-  console.error("❌ Missing GEMINI_API_KEY");
-}
+if (!GEMINI_API_KEY) console.error("❌ Missing GEMINI_API_KEY");
 
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// ------------------------------
-//  UTILS
-// ------------------------------
+// ===============================
+//  UTIL: EXTRACTORS
+// ===============================
 async function extractTextFromPDF(filePath) {
   const data = await pdf(fs.readFileSync(filePath));
   return data.text;
@@ -74,77 +76,74 @@ async function extractTextFromURL(url) {
   }
 }
 
-// ------------------------------
-//  AI GENERATE CONTENT
-// ------------------------------
+// ===============================
+//  AI CONTENT GENERATION
+// ===============================
 async function generateAIOutput(mode, text) {
   let prompt = "";
 
-  // ------------------ SUMMARY ------------------
+  // ----------- SUMMARY -----------
   if (mode === "summary") {
     prompt = `
-      Tóm tắt nội dung sau thành đoạn rõ ràng, sạch sẽ.
-      Không dùng bullet "*".
+      Tóm tắt nội dung sau với văn phong rõ ràng, không dùng dấu *, không markdown:
       ${text}
     `;
   }
 
-  // ------------------ FLASHCARDS ------------------
+  // ----------- FLASHCARDS -----------
   else if (mode === "flashcards") {
     prompt = `
-      Tạo danh sách flashcards theo JSON như sau:
+      Tạo flashcards theo định dạng JSON:
       [
         {"q": "Câu hỏi?", "a": "Trả lời"},
         ...
       ]
-      Không markdown. Chỉ JSON.
-      Nội dung:
-      ${text}
-    `;
-  }
-
-  // ------------------ Q&A ------------------
-  else if (mode === "qa") {
-    prompt = `
-      Tạo 6 câu hỏi và trả lời dựa trên văn bản.
-      Format:
-      Q: ...
-      A: ...
-      Không dùng ký hiệu "*" hoặc "-".
+      KHÔNG markdown.
       Văn bản:
       ${text}
     `;
   }
 
-  // ------------------ LEARNING SECTIONS ------------------
-  else if (mode === "learning_sections") {
+  // ----------- Q&A -----------
+  else if (mode === "qa") {
     prompt = `
-      Chia nội dung sau thành các mục học (Learning Sections).
+      Tạo 6 câu hỏi + trả lời dựa trên nội dung dưới.
       Format:
-      ## Tiêu đề
-      Nội dung...
-      Không dùng "*" hoặc "-" markdown.
+      Q: ...
+      A: ...
+      KHÔNG dùng *, -, hoặc markdown.
       ${text}
     `;
   }
 
-  // ------------------ MINDMAP JSON ------------------
+  // ----------- LEARNING SECTIONS -----------
+  else if (mode === "learning_sections") {
+    prompt = `
+      Chia nội dung sau thành các mục học rõ ràng:
+      ## Tiêu đề
+      Nội dung...
+      KHÔNG dùng ký hiệu *, -.
+      ${text}
+    `;
+  }
+
+  // ----------- MINDMAP -----------
   else if (mode === "mindmap_text") {
     prompt = `
       Bạn là AI tạo mindmap.
 
-      Hãy tạo mindmap theo **định dạng JSON CHUẨN** sau:
+      Tạo mindmap dưới dạng JSON **thuần**, đúng cấu trúc:
 
       {
-        "text": "Giải thích ngắn gọn nội dung mindmap",
+        "text": "Giải thích ngắn",
         "json": {
           "title": "Chủ đề chính",
           "nodes": [
             {
               "label": "Nhánh 1",
               "children": [
-                {"label": "Ý nhỏ 1"},
-                {"label": "Ý nhỏ 2"}
+                {"label": "Ý 1"},
+                {"label": "Ý 2"}
               ]
             }
           ]
@@ -152,29 +151,25 @@ async function generateAIOutput(mode, text) {
       }
 
       QUY TẮC:
-      - KHÔNG dùng *, -, hoặc markdown.
-      - KHÔNG trả thêm bất kỳ chữ nào ngoài JSON.
-      - JSON phải hợp lệ để parse.
-      - Nội dung ngắn gọn, rõ ràng.
+      - CHỈ trả JSON. Không markdown, không thêm text.
+      - KHÔNG dùng *, -, hoặc ký hiệu bullet.
+      - JSON phải parse được.
 
-      VĂN BẢN:
+      Văn bản:
       ${text}
     `;
   }
 
-  // ------------------ CALL GEMINI ------------------
+  // CALL GEMINI
   const aiRes = await model.generateContent(prompt);
   const raw = aiRes.response.text().trim();
 
-  // Nếu không phải mindmap → trả text
+  // Not mindmap → return as text
   if (mode !== "mindmap_text") {
-    return {
-      type: "text",
-      output: raw
-    };
+    return { type: "text", output: raw };
   }
 
-  // Mindmap cần JSON
+  // Mindmap must be JSON
   try {
     const jsonData = JSON.parse(raw);
     return {
@@ -184,27 +179,35 @@ async function generateAIOutput(mode, text) {
   } catch (e) {
     return {
       type: "text",
-      output: "Mindmap JSON parse failed. AI trả về:\n" + raw
+      output: "AI đã trả về JSON lỗi:\n" + raw
     };
   }
 }
 
-// ------------------------------
+// ===============================
 //  UPLOAD FILE
-// ------------------------------
+// ===============================
 app.post("/api/upload", upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
     const fileUrl = "/uploads/" + file.filename;
+
     let extracted = "";
     let isGrade = false;
 
+    // PDF
     if (file.mimetype.includes("pdf")) {
       extracted = await extractTextFromPDF(file.path);
       if (/score|grade|point/i.test(extracted)) isGrade = true;
-    } else if (file.mimetype.includes("word") || file.originalname.endsWith(".docx")) {
+    }
+
+    // DOCX
+    else if (file.originalname.endsWith(".docx")) {
       extracted = await extractTextFromDocx(file.path);
-    } else if (file.mimetype.includes("csv")) {
+    }
+
+    // CSV
+    else if (file.mimetype.includes("csv")) {
       extracted = await extractTextFromCSV(file.path);
       isGrade = true;
     }
@@ -221,21 +224,22 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// ------------------------------
-//  PROCESS (MAIN ENDPOINT)
-// ------------------------------
+// ===============================
+//  MAIN PROCESS
+// ===============================
 app.post("/api/process", async (req, res) => {
   try {
     const { mode, inputType, text, fileUrl, url } = req.body;
+
     let content = "";
 
     if (inputType === "text") content = text;
-    if (inputType === "url") content = await extractTextFromURL(url);
-    if (inputType === "file") {
-      const localPath = path.join(__dirname, fileUrl);
-      if (fileUrl.endsWith(".pdf")) content = await extractTextFromPDF(localPath);
-      else if (fileUrl.endsWith(".docx")) content = await extractTextFromDocx(localPath);
-      else if (fileUrl.endsWith(".csv")) content = await extractTextFromCSV(localPath);
+    else if (inputType === "url") content = await extractTextFromURL(url);
+    else if (inputType === "file") {
+      const local = path.join(__dirname, fileUrl);
+      if (fileUrl.endsWith(".pdf")) content = await extractTextFromPDF(local);
+      else if (fileUrl.endsWith(".docx")) content = await extractTextFromDocx(local);
+      else if (fileUrl.endsWith(".csv")) content = await extractTextFromCSV(local);
     }
 
     const ai = await generateAIOutput(mode, content);
@@ -246,28 +250,27 @@ app.post("/api/process", async (req, res) => {
   }
 });
 
-// ------------------------------
+// ===============================
 //  EXPORT PDF
-// ------------------------------
+// ===============================
 app.post("/api/export/pdf", async (req, res) => {
   try {
-    const { title, html } = req.body;
+    const { html } = req.body;
 
     const text = convert(html, {
-      wordwrap: 130,
-      selectors: [{ selector: "a", format: "inline" }]
+      wordwrap: 120
     });
 
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([600, 800]);
-    const fontSize = 12;
+    let page = pdfDoc.addPage([600, 800]);
     let y = 760;
 
-    const wrapped = text.split("\n");
-    for (let line of wrapped) {
-      page.drawText(line, { x: 40, y, size: fontSize });
+    const lines = text.split("\n");
+    for (const line of lines) {
+      page.drawText(line, { x: 40, y, size: 12 });
       y -= 16;
-      if (y < 40) {
+
+      if (y < 50) {
         page = pdfDoc.addPage([600, 800]);
         y = 760;
       }
@@ -282,5 +285,5 @@ app.post("/api/export/pdf", async (req, res) => {
   }
 });
 
-// ------------------------------
+// ===============================
 app.listen(3000, () => console.log("🚀 Server running on port 3000"));
