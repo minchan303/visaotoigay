@@ -1,57 +1,22 @@
-body {
-  background: #eef2f5;
-  font-family: Arial, sans-serif;
-  margin: 0;
-  padding: 20px;
-}
+/* style.css */
+body { background: #f3f7fb; font-family: Inter, Arial, sans-serif; margin: 0; padding: 18px; color:#0b1a2b; }
+.container { max-width: 980px; margin: auto; }
+header h1 { margin: 0 0 6px 0; font-size: 28px; color:#0b3; }
+.muted { color:#6b7280; font-size:13px; margin-top:6px; }
 
-.container {
-  max-width: 800px;
-  margin: auto;
-}
-
-.title {
-  color: #06b32d;
-  margin-bottom: 10px;
-}
-
-.card {
-  background: white;
-  padding: 20px;
-  border-radius: 12px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-}
-
-textarea {
-  width: 100%;
-  height: 160px;
-  padding: 10px;
-  margin-bottom: 12px;
-}
-
-input, button, select {
-  padding: 10px;
-  margin: 5px 0;
-}
-
-.row {
-  display: flex;
-  gap: 10px;
-}
-
-.primary {
-  background: #0d6efd;
-  border: none;
-  color: white;
-  padding: 12px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.result {
-  white-space: pre-wrap;
-  background: white;
-  padding: 20px;
-  border-radius: 12px;
-  margin-top: 10px;
-}
+.card { background: #fff; padding: 14px; border-radius: 10px; box-shadow: 0 10px 30px rgba(20,30,80,0.06); margin-bottom: 16px; }
+label { display:block; margin-top:8px; font-weight:600; color:#334; }
+textarea { width:100%; min-height:160px; padding:10px; border-radius:8px; border:1px solid #e1e7ef; resize:vertical; font-size:14px; }
+.row { display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap; }
+input[type="file"] { padding:6px; border-radius:6px; }
+button { background:#3b6cff; color:#fff; border:0; padding:8px 12px; border-radius:8px; cursor:pointer; font-weight:600; }
+button.primary { background:#0951d9; }
+.result { background:#fff; padding:14px; border-radius:8px; box-shadow:0 6px 20px rgba(20,30,60,0.03); min-height:160px; }
+.flashcards { display:flex; gap:10px; flex-wrap:wrap; }
+.flashcard { border:1px solid #e6eefc; padding:12px; border-radius:8px; width:calc(50% - 10px); background:#fbfdff; box-shadow: 0 4px 12px rgba(10,20,50,0.04); }
+.flashcard .q { font-weight:700; margin-bottom:6px; }
+.flashcard .a { color:#0b3; font-size:14px; }
+.pretty-text { white-space:pre-wrap; font-size:14px; line-height:1.6; }
+.mindmap-text pre { background:#fbfbfe; padding:10px; border-radius:6px; }
+canvas { max-width:100%; height:auto; }
+.error { color:#b91c1c; font-weight:700; }
