@@ -1,13 +1,12 @@
-// server.js
 import express from "express";
 import cors from "cors";
 import multer from "multer";
+import bodyParser from "body-parser";
 import fs from "fs";
 import path from "path";
 import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 import sanitizeHtml from "sanitize-html";
-import bodyParser from "body-parser";
 import XLSX from "xlsx";
 import { parse as csvParse } from "csv-parse/sync";
 import PDFDocument from "pdfkit";
@@ -15,243 +14,231 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.json({ limit: "60mb" }));
 app.use(express.static("public"));
 
 const __dirname = path.resolve();
 const UPLOADS = path.join(__dirname, "uploads");
+
 if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
 
 const upload = multer({ dest: UPLOADS });
 
-const geminiApiKey = process.env.GEMINI_API_KEY || "";
 let genAI = null;
-if (geminiApiKey) {
-  genAI = new GoogleGenerativeAI(geminiApiKey);
+
+if (process.env.GEMINI_API_KEY) {
+  genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 } else {
-  console.warn("GEMINI_API_KEY not set; AI features that call Gemini will fail.");
+  console.warn("⚠️ GEMINI_API_KEY chưa có → AI sẽ không chạy");
 }
 
-// Helpers
-async function extractTextFromFile(filePath, ext) {
-  ext = ext.toLowerCase();
+/* ------------------------------------------------
+   READ TEXT FROM FILE
+-------------------------------------------------- */
+
+async function readText(filePath, ext) {
   try {
     if (ext === ".pdf") {
       const data = await pdfParse(fs.readFileSync(filePath));
-      // If pdf-parse returns text -> use it. If empty, frontend OCR expected (we still return empty).
-      return (data && data.text) ? data.text : "";
+      return data.text || "";
     }
+
     if (ext === ".docx") {
       const r = await mammoth.extractRawText({ path: filePath });
       return r.value || "";
     }
+
     if (ext === ".txt") {
       return fs.readFileSync(filePath, "utf8");
     }
-  } catch (e) {
-    console.error("extractTextFromFile error:", e);
+  } catch (err) {
+    console.log("readText", err);
   }
+
   return "";
 }
 
-function parseSpreadsheet(filePath, ext) {
-  const buffer = fs.readFileSync(filePath);
+/* ------------------------------------------------
+   READ SPREADSHEET
+-------------------------------------------------- */
+function readSheet(fp, ext) {
+  const buf = fs.readFileSync(fp);
   if (ext === ".csv") {
-    return csvParse(buffer.toString("utf8"), { columns: true, skip_empty_lines: true });
-  } else {
-    const wb = XLSX.read(buffer, { type: "buffer" });
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    return XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    return csvParse(buf.toString(), { columns: true, skip_empty_lines: true });
   }
+
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { defval: "" });
 }
 
-function detectGradeSheet(rows) {
-  if (!Array.isArray(rows) || rows.length === 0) return false;
-  const headers = Object.keys(rows[0]).map(h => h.toLowerCase());
-  const gradeKeywords = ["score", "grade", "mark", "điểm", "diem"];
-  for (const kw of gradeKeywords) if (headers.some(h => h.includes(kw))) return true;
-
-  // numeric column heuristic
-  let numericCols = 0;
-  for (const h of headers) {
-    let numericCount = 0;
-    for (let i = 0; i < Math.min(rows.length, 30); i++) {
-      const v = rows[i][h];
-      if (v === null || v === undefined) continue;
-      const n = parseFloat(String(v).replace(",", "."));
-      if (!Number.isNaN(n)) numericCount++;
-    }
-    if (numericCount >= Math.min(rows.length, 10) * 0.6) numericCols++;
-  }
-  return numericCols >= 1;
+function isGradeTable(rows) {
+  if (!rows.length) return false;
+  const keys = Object.keys(rows[0]).map(s => s.toLowerCase());
+  return keys.some(k => ["score", "grade", "điểm", "diem"].some(x => k.includes(x)));
 }
 
-async function callGemini(prompt) {
-  if (!genAI) throw new Error("Gemini API key not configured.");
-  const model = genAI.getGenerativeModel({ model: "models/gemini-2.0-flash" });
-  const resp = await model.generateContent({ contents: [{ parts: [{ text: prompt }] }] });
-  // best-effort extract text
-  if (resp.response?.text) return resp.response.text;
-  if (resp.response?.candidates?.[0]?.content?.[0]?.text) return resp.response.candidates[0].content[0].text;
-  return JSON.stringify(resp);
-}
-
-// Routes
-app.post("/api/upload", upload.single("file"), async (req, res) => {
+/* ------------------------------------------------
+   GEMINI CALL
+-------------------------------------------------- */
+async function askGemini(prompt) {
+  if (!genAI) return "GEMINI_API_KEY chưa được thiết lập.";
   try {
-    if (!req.file) return res.status(400).json({ success: false, error: "No file uploaded" });
-    const orig = req.file.originalname || "file";
-    const ext = path.extname(orig).toLowerCase();
-    const newPath = req.file.path + ext;
-    fs.renameSync(req.file.path, newPath);
+    const model = genAI.getGenerativeModel({ model: "models/gemini-2.0-flash" });
 
-    let extractedText = "";
-    let parsedTable = null;
-    let isGrade = false;
+    const out = await model.generateContent(prompt);
+    return out.response.text();
+  } catch (e) {
+    return "❌ Gemini lỗi: " + e.message;
+  }
+}
+
+/* ------------------------------------------------
+   UPLOAD FILE
+-------------------------------------------------- */
+app.post("/api/upload", upload.single("file"), async (req, res) => {
+  const ext = path.extname(req.file.originalname).toLowerCase();
+  const newPath = req.file.path + ext;
+
+  fs.renameSync(req.file.path, newPath);
+
+  let text = "";
+  let table = null;
+  let grade = false;
+
+  if ([".csv", ".xls", ".xlsx"].includes(ext)) {
+    table = readSheet(newPath, ext);
+    grade = isGradeTable(table);
+  } else {
+    text = await readText(newPath, ext);
+  }
+
+  res.json({
+    success: true,
+    fileUrl: "/uploads/" + path.basename(newPath),
+    extractedText: text,
+    parsedTable: table,
+    isGrade: grade
+  });
+});
+
+/* ------------------------------------------------
+   PROCESS
+-------------------------------------------------- */
+app.post("/api/process", async (req, res) => {
+  let { inputType, text, url, fileUrl, mode } = req.body;
+
+  let content = "";
+
+  if (inputType === "text") content = text;
+
+  if (inputType === "url") {
+    const r = await fetch(url);
+    const html = await r.text();
+    content = sanitizeHtml(html, { allowedTags: [] });
+  }
+
+  if (inputType === "file") {
+    const filename = path.join(UPLOADS, path.basename(fileUrl));
+    const ext = path.extname(filename);
 
     if ([".csv", ".xls", ".xlsx"].includes(ext)) {
-      parsedTable = parseSpreadsheet(newPath, ext);
-      isGrade = detectGradeSheet(parsedTable);
+      const rows = readSheet(filename, ext);
+      if (isGradeTable(rows)) {
+        return res.json({
+          success: true,
+          type: "chart",
+          chart: {
+            labels: rows.map(r => r[Object.keys(r)[0]]),
+            datasets: [
+              {
+                label: "Điểm",
+                data: rows.map(r => Number(r[Object.keys(r)[1]]) || 0)
+              }
+            ]
+          }
+        });
+      }
+      content = JSON.stringify(rows, null, 2);
     } else {
-      extractedText = await extractTextFromFile(newPath, ext);
+      content = await readText(filename, ext);
     }
-
-    const fileUrl = `/uploads/${path.basename(newPath)}`;
-    res.json({ success: true, fileUrl, extractedText, parsedTable, isGrade });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ success: false, error: e.message });
   }
+
+  const max = 20000;
+  const truncated = content.slice(0, max);
+
+  // MODES
+  if (mode === "summary") {
+    const output = await askGemini(
+      `Tóm tắt đẹp, bullet, dễ đọc:\n\n${truncated}`
+    );
+    return res.json({ success: true, type: "text", output });
+  }
+
+  if (mode === "flashcards") {
+    const output = await askGemini(
+      `Tạo flashcards (JSON array {q,a}) từ nội dung:\n${truncated}`
+    );
+    return res.json({ success: true, type: "text", output });
+  }
+
+  if (mode === "qa") {
+    const output = await askGemini(
+      `Tạo Q&A rõ ràng từ nội dung:\n${truncated}`
+    );
+    return res.json({ success: true, type: "text", output });
+  }
+
+  if (mode === "learning_sections") {
+    const output = await askGemini(
+      `Chia bài học thành từng section, mỗi section có tiêu đề + mô tả ngắn + 3 ý chính:\n${truncated}`
+    );
+    return res.json({ success: true, type: "text", output });
+  }
+
+  if (mode === "mindmap_text") {
+    const out = await askGemini(
+      `Trả 1 JSON dạng:
+      {
+        "json": { "title":"...", "nodes":[{"label":"...", "children":[...]}]},
+        "text":"• bullet mindmap"
+      }
+
+      Nội dung:
+      ${truncated}`
+    );
+
+    const jsonMatch = out.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return res.json({ success: false, error: "Không parse JSON từ AI" });
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    return res.json({ success: true, type: "mindmap_text", output: parsed });
+  }
+
+  res.json({ success: false, error: "Mode không hợp lệ" });
 });
 
-app.post("/api/process", async (req, res) => {
-  try {
-    const { inputType, text, url, fileUrl, mode } = req.body;
-    let content = "";
-
-    if (inputType === "text") {
-      content = text || "";
-    } else if (inputType === "url") {
-      if (!url) return res.status(400).json({ success: false, error: "Missing URL" });
-      const r = await fetch(url);
-      const html = await r.text();
-      content = sanitizeHtml(html, { allowedTags: [] });
-    } else if (inputType === "file") {
-      if (!fileUrl) return res.status(400).json({ success: false, error: "Missing fileUrl" });
-      const filename = path.basename(fileUrl);
-      const filePath = path.join(UPLOADS, filename);
-      if (!fs.existsSync(filePath)) return res.status(404).json({ success: false, error: "File not found" });
-      const ext = path.extname(filePath).toLowerCase();
-      if ([".csv", ".xls", ".xlsx"].includes(ext)) {
-        const rows = parseSpreadsheet(filePath, ext);
-        if (detectGradeSheet(rows)) {
-          // build a simple chart dataset
-          const headers = Object.keys(rows[0]);
-          // pick label column (first non-numeric) and numeric value column
-          let labelCol = headers.find(h => /name|student|tên|id/i.test(h)) || headers[0];
-          let valueCol = headers.find(h => {
-            for (let i = 0; i < Math.min(rows.length, 30); i++) {
-              const v = rows[i][h];
-              if (v === null || v === undefined) continue;
-              if (!Number.isNaN(parseFloat(String(v).replace(",", ".")))) return true;
-            }
-            return false;
-          }) || headers[1];
-
-          const labels = rows.map(r => (r[labelCol] != null ? String(r[labelCol]) : ""));
-          const data = rows.map(r => {
-            const v = r[valueCol];
-            const n = parseFloat(String(v).replace(",", "."));
-            return Number.isNaN(n) ? 0 : n;
-          });
-
-          return res.json({ success: true, type: "chart", chart: { labels, datasets: [{ label: valueCol, data }] } });
-        }
-        content = JSON.stringify(rows.slice(0, 200), null, 2);
-      } else {
-        // For pdf files if pdf-parse returns empty, front-end OCR intended; still return whatever server can extract
-        content = await extractTextFromFile(filePath, ext);
-      }
-    } else {
-      return res.status(400).json({ success: false, error: "Invalid inputType" });
-    }
-
-    // truncate very long content for LLM
-    const MAX = 20000;
-    const truncated = content.slice(0, MAX);
-
-    // Modes handling — call Gemini where needed
-    if (mode === "summary") {
-      const prompt = `Tóm tắt ngắn bằng tiếng Việt thành các bullet points đẹp:\n\n${truncated}`;
-      const out = await callGemini(prompt);
-      return res.json({ success: true, type: "text", output: out });
-    }
-
-    if (mode === "flashcards") {
-      const prompt = `Tạo flashcards (JSON array of { "q": "...", "a": "..." }) từ nội dung sau, trả chỉ JSON:\n\n${truncated}`;
-      const out = await callGemini(prompt);
-      return res.json({ success: true, type: "text", output: out });
-    }
-
-    if (mode === "qa") {
-      const prompt = `Tạo danh sách Q&A (câu hỏi & trả lời) từ nội dung sau. Trả định dạng rõ ràng:\n\n${truncated}`;
-      const out = await callGemini(prompt);
-      return res.json({ success: true, type: "text", output: out });
-    }
-
-    if (mode === "learning_sections") {
-      const prompt = `Chia nội dung sau thành các mục học (learning sections) — mỗi mục gồm tiêu đề, mô tả ngắn và 3 ý chính:\n\n${truncated}`;
-      const out = await callGemini(prompt);
-      return res.json({ success: true, type: "text", output: out });
-    }
-
-    if (mode === "mindmap_text") {
-      const prompt = `Phân tích nội dung và trả về DUY NHẤT 1 JSON: { "json": { "title":"...", "nodes":[{ "label":"...", "children":[...] }] }, "text":"•..." } (tiếng Việt). Nội dung:\n\n${truncated}`;
-      const out = await callGemini(prompt);
-      const match = out.match(/\{[\s\S]*\}/);
-      if (!match) return res.json({ success: false, error: "AI không trả JSON" });
-      try {
-        const parsed = JSON.parse(match[0]);
-        return res.json({ success: true, type: "mindmap_text", output: parsed });
-      } catch (e) {
-        return res.json({ success: false, error: "Không parse JSON từ AI" });
-      }
-    }
-
-    return res.json({ success: false, error: "Mode không hợp lệ" });
-  } catch (e) {
-    console.error("process error:", e);
-    res.status(500).json({ success: false, error: e.message });
-  }
-});
-
-// Export result to PDF (server-side)
+/* ------------------------------------------------
+   EXPORT PDF
+-------------------------------------------------- */
 app.post("/api/export/pdf", (req, res) => {
-  try {
-    const { title = "Result", html = "", text = "" } = req.body;
-    res.setHeader("Content-Type", "application/pdf");
-    const doc = new PDFDocument({ size: "A4", margin: 40 });
-    doc.pipe(res);
+  const { title, html } = req.body;
 
-    doc.fontSize(20).text(title, { align: "center" });
-    doc.moveDown();
+  res.setHeader("Content-Type", "application/pdf");
 
-    if (html) {
-      // simple convert: strip tags and print
-      const plain = sanitizeHtml(html, { allowedTags: [] });
-      doc.fontSize(12).text(plain);
-    } else {
-      doc.fontSize(12).text(text || "");
-    }
+  const doc = new PDFDocument({ size: "A4", margin: 40 });
+  doc.pipe(res);
 
-    doc.end();
-  } catch (e) {
-    res.status(500).json({ success: false, error: e.message });
-  }
+  doc.fontSize(18).text(title, { align: "center" });
+  doc.moveDown();
+
+  const plain = sanitizeHtml(html, { allowedTags: [] });
+  doc.fontSize(12).text(plain);
+
+  doc.end();
 });
 
-app.use("/uploads", express.static(UPLOADS));
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server started on ${PORT}`));
-
+app.listen(process.env.PORT || 3000, () =>
+  console.log("🚀 Server is running!")
+);
