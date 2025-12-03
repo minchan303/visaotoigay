@@ -11,10 +11,11 @@ import bodyParser from "body-parser";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import XLSX from "xlsx";
 import { parse as csvParse } from "csv-parse/sync";
+import Tesseract from "tesseract.js-node";
 
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.json({ limit: "100mb" }));
 app.use(express.static("public"));
 
 const __dirname = path.resolve();
@@ -23,101 +24,127 @@ if (!fs.existsSync(UPLOADS)) fs.mkdirSync(UPLOADS);
 
 const upload = multer({ dest: UPLOADS });
 
-if (!process.env.GEMINI_API_KEY) {
-  console.warn("⚠️ WARNING: GEMINI_API_KEY is missing!");
-}
-
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-/*--------------------------------------
-  HELPER FUNCTIONS
---------------------------------------*/
+/* ============================================================
+   ==========  OCR SCAN PDF  ==================================
+===============================================================*/
+async function ocrPdf(filePath) {
+  const buffer = fs.readFileSync(filePath);
 
+  const result = await Tesseract.recognize(buffer, "vie+eng", {
+    logger: m => console.log("[OCR]: ", m)
+  });
+
+  return result.data.text;
+}
+
+/* ============================================================
+   ==========  READ TEXT FILES  ===============================
+===============================================================*/
 async function extractText(filePath, ext) {
+  ext = ext.toLowerCase();
+
   try {
-    ext = ext.toLowerCase();
     if (ext === ".pdf") {
       const data = await pdf(fs.readFileSync(filePath));
+
+      // Nếu pdf-parse KHÔNG đọc được (PDF dạng scan)
+      if (!data.text.trim()) {
+        console.log("→ PDF scan, chuyển sang OCR");
+        return await ocrPdf(filePath);
+      }
+
       return data.text;
     }
+
     if (ext === ".docx") {
       const result = await mammoth.extractRawText({ path: filePath });
       return result.value;
     }
+
     if (ext === ".txt") {
       return fs.readFileSync(filePath, "utf8");
     }
   } catch (e) {
-    console.error(e);
+    console.log("extractText lỗi → fallback OCR");
+    return await ocrPdf(filePath);
   }
+
   return "";
 }
 
+/* ============================================================
+   ==========  SPREADSHEET  ===================================
+===============================================================*/
 function parseSpreadsheet(filePath, ext) {
-  const buffer = fs.readFileSync(filePath);
+  const buf = fs.readFileSync(filePath);
 
   if (ext === ".csv") {
-    return csvParse(buffer.toString(), {
-      columns: true,
-      skip_empty_lines: true
-    });
+    return csvParse(buf.toString(), { columns: true, skip_empty_lines: true });
   }
 
-  const wb = XLSX.read(buffer, { type: "buffer" });
+  const wb = XLSX.read(buf, { type: "buffer" });
   const ws = wb.Sheets[wb.SheetNames[0]];
   return XLSX.utils.sheet_to_json(ws, { defval: "" });
 }
 
 function detectGradeSheet(rows) {
-  if (!rows || !rows.length) return false;
-  const keys = Object.keys(rows[0]).map(x => x.toLowerCase());
+  if (!rows.length) return false;
 
-  const match = ["điểm", "score", "point", "grade"];
+  const keys = Object.keys(rows[0]).map(x => x.toLowerCase());
+  const match = ["điểm", "diem", "score", "grade"];
+
   return keys.some(k => match.some(m => k.includes(m)));
 }
 
+/* ============================================================
+   ==========   GEMINI API   ==================================
+===============================================================*/
 async function askGemini(prompt) {
-  const model = genAI.getGenerativeModel({ model: "models/gemini-2.0-flash" });
+  const model = genAI.getGenerativeModel({
+    model: "models/gemini-2.0-flash"
+  });
+
   const result = await model.generateContent(prompt);
   return result.response.text();
 }
 
-/*--------------------------------------
-  UPLOAD FILE
---------------------------------------*/
+/* ============================================================
+   ==========   UPLOAD FILE   =================================
+===============================================================*/
 app.post("/api/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.json({ success: false, error: "Không có file" });
+  if (!req.file) return res.json({ success: false });
 
-  const ext = path.extname(req.file.originalname).toLowerCase();
+  const ext = path.extname(req.file.originalname);
   const newFile = req.file.path + ext;
+
   fs.renameSync(req.file.path, newFile);
 
-  let extractedText = "";
-  let parsedTable = null;
-  let isGradeSheet = false;
+  let text = "";
+  let table = null;
 
-  if ([".csv", ".xlsx", ".xls"].includes(ext)) {
-    parsedTable = parseSpreadsheet(newFile, ext);
-    isGradeSheet = detectGradeSheet(parsedTable);
+  if ([".csv", ".xls", ".xlsx"].includes(ext)) {
+    table = parseSpreadsheet(newFile, ext);
   } else {
-    extractedText = await extractText(newFile, ext);
+    text = await extractText(newFile, ext);
   }
 
   res.json({
     success: true,
     fileUrl: "/uploads/" + path.basename(newFile),
-    extractedText,
-    parsedTable,
-    isGradeSheet
+    extractedText: text,
+    parsedTable: table,
+    isGradeSheet: table ? detectGradeSheet(table) : false
   });
 });
 
-/*--------------------------------------
-  PROCESS
---------------------------------------*/
+/* ============================================================
+   ==========   PROCESS   =====================================
+===============================================================*/
 app.post("/api/process", async (req, res) => {
   try {
-    const { inputType, text, url, fileUrl, mode } = req.body;
+    let { inputType, text, url, fileUrl, mode } = req.body;
     let content = "";
 
     // TEXT
@@ -131,24 +158,26 @@ app.post("/api/process", async (req, res) => {
     }
 
     // FILE
-    if (inputType === "file" && fileUrl) {
+    if (inputType === "file") {
       const filePath = path.join(UPLOADS, path.basename(fileUrl));
-      const ext = path.extname(filePath).toLowerCase();
+      const ext = path.extname(filePath);
 
-      if ([".csv", ".xlsx", ".xls"].includes(ext)) {
+      if ([".csv", ".xls", ".xlsx"].includes(ext)) {
         const rows = parseSpreadsheet(filePath, ext);
 
         if (detectGradeSheet(rows)) {
-          const labels = rows.map(r => r[Object.keys(r)[0]]);
-          const values = rows.map(r => Number(r[Object.keys(r)[1]]));
-
           return res.json({
             success: true,
             type: "chart",
             chart: {
-              labels,
+              labels: rows.map(r => r[Object.keys(r)[0]]),
               datasets: [
-                { label: "Điểm", data: values }
+                {
+                  label: "Điểm",
+                  data: rows.map(r =>
+                    Number(r[Object.keys(r)[1]]) || 0
+                  )
+                }
               ]
             }
           });
@@ -160,63 +189,89 @@ app.post("/api/process", async (req, res) => {
       }
     }
 
-    if (!content || content.length === 0)
-      return res.json({ success: false, error: "Không có nội dung" });
+    /* ==================  FORMATTER ĐẸP  ================== */
 
-    /* ---------------- MODE HANDLING ----------------*/
     if (mode === "summary") {
-      const output = await askGemini("Tóm tắt ngắn gọn nội dung:\n" + content);
+      const output = await askGemini(`
+Hãy tóm tắt nội dung sau thành 4–6 ý đẹp mắt.
+• Dùng bullet gọn
+• Viết rõ ràng, mạch lạc
+• Tiếng Việt
+
+Nội dung:
+${content}
+`);
+
       return res.json({ success: true, type: "text", output });
     }
 
     if (mode === "flashcards") {
-      const output = await askGemini(
-        "Tạo flashcards dạng JSON (q,a) từ nội dung:\n" + content
-      );
+      const output = await askGemini(`
+Tạo flashcards đẹp dưới dạng JSON:
+[
+  {"q": "...", "a": "..."}
+]
+
+Nội dung:
+${content}
+`);
+
       return res.json({ success: true, type: "text", output });
     }
 
     if (mode === "qa") {
-      const output = await askGemini(
-        "Tạo danh sách câu hỏi & trả lời dạng JSON từ nội dung:\n" + content
-      );
+      const output = await askGemini(`
+Tạo danh sách câu hỏi & trả lời rõ ràng.
+Định dạng:
+
+Câu hỏi 1:
+Trả lời 1
+
+Câu hỏi 2:
+Trả lời 2
+
+Nội dung:
+${content}
+`);
+
       return res.json({ success: true, type: "text", output });
     }
 
     if (mode === "mindmap_text") {
       const out = await askGemini(`
-Phân tích nội dung và TRẢ VỀ DUY NHẤT 1 JSON:
+TRẢ VỀ DUY NHẤT 1 JSON SAU:
+
 {
-  "json": {...},
-  "text": "• Mindmap dạng bullet"
+  "json": {
+    "title": "...",
+    "nodes": [ { "label":"...", "children":[...] } ]
+  },
+  "text": "• Mindmap dạng gạch đầu dòng đẹp"
 }
+
 Nội dung:
-${content}`);
+${content}
+`);
 
-      const match = out.match(/\{[\s\S]+\}/);
-      if (!match) return res.json({ success: false, error: "Không parse được JSON" });
-
+      const json = out.match(/\{[\s\S]+\}/);
       return res.json({
         success: true,
         type: "mindmap_text",
-        output: JSON.parse(match[0])
+        output: JSON.parse(json[0])
       });
     }
 
-    res.json({ success: false, error: "Mode không hợp lệ" });
-
   } catch (e) {
-    console.error(e);
+    console.log(e);
     res.json({ success: false, error: e.message });
   }
 });
 
-/*--------------------------------------
-  STATIC FILES
---------------------------------------*/
+/* ============================================================
+   STATIC
+===============================================================*/
 app.use("/uploads", express.static(UPLOADS));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () =>
-  console.log("🚀 Server running on port " + PORT)
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Server running")
 );
