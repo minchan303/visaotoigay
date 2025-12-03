@@ -9,55 +9,72 @@
 
   <!-- pdf.js (render PDF pages to canvas for client OCR) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js"></script>
-
   <!-- Tesseract.js (browser) for OCR -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
-
   <!-- Mermaid for mindmap drawing -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-
   <!-- Chart.js for charts -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    /* small inline safety: ensure worker path is set early */
+  </style>
 </head>
 <body>
   <div class="container">
-    <h1 id="appTitle">HappyUni</h1>
+    <header>
+      <h1 id="appTitle">HappyUni</h1>
+      <p class="muted">Paste text, upload file (PDF/Word/CSV) hoặc dán URL → chọn chế độ → Generate</p>
+    </header>
 
-    <div class="card">
-      <label>Chế độ</label>
-      <select id="mode">
-        <option value="summary">Tóm tắt</option>
-        <option value="flashcards">Flashcards</option>
-        <option value="qa">Q&A</option>
-        <option value="learning_sections">Chia mục học</option>
-        <option value="mindmap_text">Mindmap (text + JSON)</option>
-      </select>
+    <main>
+      <section class="card">
+        <div class="row wrap">
+          <label>Chế độ</label>
+          <select id="mode">
+            <option value="summary">Tóm tắt</option>
+            <option value="flashcards">Flashcards</option>
+            <option value="qa">Q&amp;A</option>
+            <option value="learning_sections">Chia mục học</option>
+            <option value="mindmap_text">Mindmap (text + JSON)</option>
+          </select>
+        </div>
 
-      <label>Nội dung (paste) hoặc upload file / dán url</label>
-      <textarea id="text" placeholder="Nhập hoặc dán văn bản..."></textarea>
+        <label>Nội dung (paste) hoặc upload file / dán URL</label>
+        <textarea id="text" placeholder="Nhập hoặc dán văn bản..."></textarea>
 
-      <div class="row">
-        <input type="file" id="file" />
-        <button id="uploadBtn">Upload</button>
-        <button id="ocrBtn">OCR (nếu PDF scan hoặc ảnh)</button>
-      </div>
-      <div id="uploadInfo" class="muted"></div>
+        <div class="row">
+          <input type="file" id="file" />
+          <button id="uploadBtn">Upload</button>
+          <button id="ocrBtn">OCR (PDF/Ảnh)</button>
+        </div>
+        <div id="uploadInfo" class="muted"></div>
 
-      <div class="row">
-        <input id="url" placeholder="Dán URL..." style="flex:1"/>
-        <button id="fetchBtn">Fetch & Generate</button>
-      </div>
+        <div class="row">
+          <input id="url" placeholder="Dán URL..." style="flex:1" />
+          <button id="fetchBtn">Fetch & Generate</button>
+        </div>
 
-      <div class="row">
-        <button id="generateBtn">Generate</button>
-        <button id="exportPdfBtn" style="display:none">Export PDF</button>
-        <button id="exportPngBtn" style="display:none">Export Mindmap PNG</button>
-      </div>
-    </div>
+        <div class="row">
+          <button id="generateBtn" class="primary">Generate</button>
+          <button id="exportPdfBtn" style="display:none">Export PDF</button>
+          <button id="exportPngBtn" style="display:none">Export Mindmap PNG</button>
+        </div>
+      </section>
 
-    <h2>Kết quả</h2>
-    <div id="result" class="result">Kết quả sẽ hiển thị ở đây.</div>
+      <h2>Kết quả</h2>
+      <section id="result" class="result">Kết quả sẽ hiển thị ở đây.</section>
+    </main>
   </div>
+
+  <script>
+    // set pdf.js worker from CDN (must use HTTPS)
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js";
+    }
+    // init mermaid
+    if (window.mermaid) mermaid.initialize({ startOnLoad: false });
+  </script>
 
   <script src="script.js"></script>
 </body>
