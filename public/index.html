@@ -7,24 +7,23 @@
 
   <link rel="stylesheet" href="style.css" />
 
-  <!-- pdf.js (render PDF pages to canvas for client OCR) -->
+  <!-- pdf.js để render PDF (OCR client-side) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.min.js"></script>
-  <!-- Tesseract.js (browser) for OCR -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
-  <!-- Mermaid for mindmap drawing -->
-  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
-  <!-- Chart.js for charts -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <style>
-    /* small inline safety: ensure worker path is set early */
-  </style>
+  <!-- Tesseract.js OCR -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+  <!-- Mermaid cho mindmap -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
+
 <body>
   <div class="container">
     <header>
       <h1 id="appTitle">HappyUni</h1>
-      <p class="muted">Paste text, upload file (PDF/Word/CSV) hoặc dán URL → chọn chế độ → Generate</p>
     </header>
 
     <main>
@@ -41,24 +40,25 @@
         </div>
 
         <label>Nội dung (paste) hoặc upload file / dán URL</label>
-        <textarea id="text" placeholder="Nhập hoặc dán văn bản..."></textarea>
+        <textarea id="text" placeholder="Nhập hoặc dán văn bản…"></textarea>
 
         <div class="row">
           <input type="file" id="file" />
           <button id="uploadBtn">Upload</button>
           <button id="ocrBtn">OCR (PDF/Ảnh)</button>
         </div>
+
         <div id="uploadInfo" class="muted"></div>
 
         <div class="row">
-          <input id="url" placeholder="Dán URL..." style="flex:1" />
-          <button id="fetchBtn">Fetch & Generate</button>
+          <input id="url" placeholder="Dán URL…" style="flex:1">
+          <button id="fetchBtn">Fetch &amp; Generate</button>
         </div>
 
         <div class="row">
           <button id="generateBtn" class="primary">Generate</button>
-          <button id="exportPdfBtn" style="display:none">Export PDF</button>
-          <button id="exportPngBtn" style="display:none">Export Mindmap PNG</button>
+          <button id="exportPdfBtn" style="display:none;">Export PDF</button>
+          <button id="exportPngBtn" style="display:none;">Export Mindmap PNG</button>
         </div>
       </section>
 
@@ -67,13 +67,18 @@
     </main>
   </div>
 
+  <!-- Initialize libraries -->
   <script>
-    // set pdf.js worker from CDN (must use HTTPS)
+    /* pdf.js worker */
     if (window.pdfjsLib) {
-      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js";
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.9.179/pdf.worker.min.js";
     }
-    // init mermaid
-    if (window.mermaid) mermaid.initialize({ startOnLoad: false });
+
+    /* mermaid init */
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: false });
+    }
   </script>
 
   <script src="script.js"></script>
