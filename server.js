@@ -6,7 +6,6 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import cors from "cors";
-import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -69,9 +68,21 @@ async function extractTextFromCSV(filePath) {
 async function extractTextFromURL(url) {
   try {
     const html = await (await fetch(url)).text();
-    const $ = cheerio.load(html);
-    return $("body").text().replace(/\s+/g, " ").trim();
-  } catch (e) {
+
+    // Remove scripts & styles
+    let cleaned = html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ");
+
+    // Remove all HTML tags
+    cleaned = cleaned.replace(/<[^>]+>/g, " ");
+
+    // Normalize whitespace
+    cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+    return cleaned;
+
+  } catch (err) {
     return "Không thể tải URL.";
   }
 }
@@ -287,3 +298,4 @@ app.post("/api/export/pdf", async (req, res) => {
 
 // ===============================
 app.listen(3000, () => console.log("🚀 Server running on port 3000"));
+
