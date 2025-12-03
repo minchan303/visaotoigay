@@ -1,3 +1,4 @@
+// public/script.js
 mermaid.initialize({ startOnLoad: false });
 
 const $ = id => document.getElementById(id);
@@ -45,6 +46,10 @@ uploadBtn.addEventListener("click", async () => {
     if (j.success) {
       uploadInfo.innerHTML = `Uploaded: <a href="${j.fileUrl}" target="_blank">${j.fileUrl}</a>`;
       if (j.extractedText) textEl.value = j.extractedText.slice(0, 20000);
+      if (j.isGradeSheet && j.parsedTable) {
+        uploadInfo.innerHTML += `<div class="muted">Detected spreadsheet (bảng điểm). Bạn có thể bấm Generate (chọn InputType "file") để tạo chart.</div>`;
+        // store parsedTable reference? We'll let user call process with fileUrl
+      }
     } else {
       uploadInfo.textContent = "Upload failed: " + (j.error || "");
     }
@@ -62,12 +67,30 @@ fetchBtn.addEventListener("click", async () => {
   handleResponse(j);
 });
 
-// generate from text
+// generate from text or file
 generateBtn.addEventListener("click", async () => {
   const txt = textEl.value.trim();
-  if (!txt) return alert("Nhập văn bản hoặc upload file/URL");
+  // if there's an uploaded file and user left text empty, prefer file input mode
+  let inputType = "text";
+  let payload = { inputType: "text", text: txt, mode: modeEl.value };
+
+  // if text empty but file exists and uploadInfo has link, prompt to use file
+  const f = fileEl.files[0];
+  if (!txt && f) {
+    // get public link shown in uploadInfo (if any)
+    const link = uploadInfo.querySelector?.("a")?.href;
+    if (link) {
+      inputType = "file";
+      payload = { inputType: "file", fileUrl: link, mode: modeEl.value };
+    } else {
+      return alert("Vui lòng upload file trước (bấm Upload File) hoặc nhập văn bản.");
+    }
+  } else {
+    if (!txt) return alert("Nhập văn bản hoặc upload file/URL");
+  }
+
   setLoading(true);
-  const j = await postJSON("/api/process", { inputType: "text", text: txt, mode: modeEl.value });
+  const j = await postJSON("/api/process", payload);
   handleResponse(j);
 });
 
@@ -80,11 +103,10 @@ ocrBtn.addEventListener("click", async () => {
   try {
     const { createWorker } = Tesseract;
     const worker = createWorker({ logger: m => {
-      // console.log(m);
       ocrStatus.textContent = `OCR: ${Math.round((m.progress||0)*100)}% ${m.status||''}`;
     }});
     await worker.load();
-    await worker.loadLanguage('eng+vie'); // try english + vietnamese
+    await worker.loadLanguage('eng+vie');
     await worker.initialize('eng+vie');
     const { data: { text } } = await worker.recognize(f);
     await worker.terminate();
@@ -116,6 +138,11 @@ function handleResponse(j) {
     return;
   }
 
+  if (j.type === "chart") {
+    renderChart(j.chart, j.meta);
+    return;
+  }
+
   if (j.type === "mindmap_json") {
     renderMindmapFromJson(j.output);
     return;
@@ -127,11 +154,13 @@ function handleResponse(j) {
 <pre style="white-space:pre-wrap;">${escapeHtml(j.output.text || '')}</pre>`;
     resultEl.innerHTML = html;
     exportPngBtn.style.display = "none";
+    // also render visual mindmap if JSON present
+    if (j.output.json) renderMindmapFromJson(j.output.json);
     return;
   }
 
   // fallback
-  resultEl.textContent = JSON.stringify(j);
+  resultEl.textContent = JSON.stringify(j, null, 2);
 }
 
 // render mindmap json -> mermaid flowchart & show export button
@@ -158,7 +187,9 @@ function renderMindmapFromJson(data) {
     const mermaidText = `flowchart TB\n${nodes.join('\n')}\n${edges.join('\n')}`;
     const insertId = 'mermaid-'+Date.now();
     mermaid.mermaidAPI.render(insertId, mermaidText, (svgCode) => {
-      resultEl.innerHTML = svgCode;
+      // append svg below textual result
+      const prev = resultEl.innerHTML;
+      resultEl.innerHTML = prev + `<div>${svgCode}</div>`;
       lastMindmapSvg = svgCode;
       exportPngBtn.style.display = "inline-block";
     }, resultEl);
@@ -200,13 +231,44 @@ exportPngBtn.addEventListener("click", () => {
   img.src = url;
 });
 
+// render chart using Chart.js
+let activeChart = null;
+function renderChart(chartObj, meta) {
+  resultEl.innerHTML = `<h3>Biểu đồ</h3><canvas id="chartCanvas"></canvas>
+    <div class="muted">Meta: ${escapeHtml(JSON.stringify(meta || {}, null, 2))}</div>`;
+  const ctx = document.getElementById("chartCanvas").getContext("2d");
+  if (activeChart) {
+    try { activeChart.destroy(); } catch(e) {}
+  }
+  const datasets = (chartObj.datasets || []).map(ds => ({
+    label: ds.label || "Series",
+    data: ds.data || [],
+    fill: false
+  }));
+  activeChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: chartObj.labels || [],
+      datasets
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 0 } },
+        y: { beginAtZero: true }
+      }
+    }
+  });
+  exportPngBtn.style.display = "none";
+}
+
 // set title safely (block offensive content)
 setTitleBtn.addEventListener("click", () => {
   const newTitle = newTitleEl.value.trim();
   if (!newTitle) return alert("Nhập tiêu đề mới");
   // simple check: block words that are slurs (basic)
   const lowered = newTitle.toLowerCase();
-  const blocked = ["gay", "slur-example"]; // blocked list - expand as needed
+  const blocked = ["slur-example"]; // expand as needed
   for (const b of blocked) {
     if (lowered.includes(b)) {
       return alert("Tiêu đề chứa từ không phù hợp. Vui lòng chọn tiêu đề khác.");
