@@ -1,294 +1,183 @@
-// public/script.js
-mermaid.initialize({ startOnLoad: false });
-
 const $ = id => document.getElementById(id);
-const modeEl = $("mode");
+
 const textEl = $("text");
 const fileEl = $("file");
 const uploadBtn = $("uploadBtn");
 const uploadInfo = $("uploadInfo");
-const fetchBtn = $("fetchBtn");
 const urlEl = $("url");
+const fetchBtn = $("fetchBtn");
 const generateBtn = $("generateBtn");
 const resultEl = $("result");
-const exportPngBtn = $("exportPngBtn");
+const modeEl = $("mode");
+const exportBtn = $("exportPngBtn");
 
-const imgFileEl = $("imgFile");
-const ocrBtn = $("ocrBtn");
-const ocrStatus = $("ocrStatus");
+let lastSvg = "";
 
-const newTitleEl = $("newTitle");
-const setTitleBtn = $("setTitleBtn");
-const appTitleEl = $("appTitle");
+/* UPLOAD -----------------------------------------*/
+uploadBtn.addEventListener("click", async () => {
+  const file = fileEl.files[0];
+  if (!file) return alert("Chọn file trước");
 
-let lastMindmapSvg = "";
+  const fd = new FormData();
+  fd.append("file", file);
 
-// helper
-async function postJSON(path, data) {
-  const r = await fetch(path, {
+  uploadInfo.textContent = "Đang upload...";
+
+  const res = await fetch("/api/upload", { method: "POST", body: fd });
+  const j = await res.json();
+
+  if (!j.success) {
+    uploadInfo.textContent = "Lỗi: " + j.error;
+    return;
+  }
+
+  uploadInfo.innerHTML = `File đã upload: <b>${j.fileUrl}</b>`;
+
+  if (j.extractedText) textEl.value = j.extractedText;
+});
+
+/* URL ---------------------------------------------*/
+fetchBtn.addEventListener("click", async () => {
+  if (!urlEl.value.trim()) return alert("Nhập URL");
+
+  callProcess({ inputType: "url", url: urlEl.value });
+});
+
+/* GENERATE ----------------------------------------*/
+generateBtn.addEventListener("click", async () => {
+  let payload = {
+    mode: modeEl.value
+  };
+
+  if (textEl.value.trim()) {
+    payload.inputType = "text";
+    payload.text = textEl.value;
+  } else if (uploadInfo.innerText.includes("uploads/")) {
+    payload.inputType = "file";
+    payload.fileUrl = uploadInfo.innerText.replace("File đã upload: ", "").trim();
+  } else if (urlEl.value.trim()) {
+    payload.inputType = "url";
+    payload.url = urlEl.value;
+  } else {
+    return alert("Hãy nhập văn bản hoặc upload file hoặc dán URL");
+  }
+
+  callProcess(payload);
+});
+
+/* CALL PROCESS ------------------------------------*/
+async function callProcess(payload) {
+  resultEl.textContent = "⏳ Đang xử lý...";
+
+  const res = await fetch("/api/process", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data)
+    body: JSON.stringify(payload)
   });
-  return r.json();
+
+  const j = await res.json();
+  handleResponse(j);
 }
 
-// upload file
-uploadBtn.addEventListener("click", async () => {
-  const f = fileEl.files[0];
-  if (!f) return alert("Chọn file trước");
-  const fd = new FormData();
-  fd.append("file", f);
-  uploadInfo.textContent = "Uploading...";
-  try {
-    const res = await fetch("/api/upload", { method: "POST", body: fd });
-    const j = await res.json();
-    if (j.success) {
-      uploadInfo.innerHTML = `Uploaded: <a href="${j.fileUrl}" target="_blank">${j.fileUrl}</a>`;
-      if (j.extractedText) textEl.value = j.extractedText.slice(0, 20000);
-      if (j.isGradeSheet && j.parsedTable) {
-        uploadInfo.innerHTML += `<div class="muted">Detected spreadsheet (bảng điểm). Bạn có thể bấm Generate (chọn InputType "file") để tạo chart.</div>`;
-        // store parsedTable reference? We'll let user call process with fileUrl
-      }
-    } else {
-      uploadInfo.textContent = "Upload failed: " + (j.error || "");
-    }
-  } catch (e) {
-    uploadInfo.textContent = "Upload error";
-  }
-});
-
-// fetch URL generate
-fetchBtn.addEventListener("click", async () => {
-  const u = urlEl.value.trim();
-  if (!u) return alert("Nhập URL");
-  setLoading(true);
-  const j = await postJSON("/api/process", { inputType: "url", url: u, mode: modeEl.value });
-  handleResponse(j);
-});
-
-// generate from text or file
-generateBtn.addEventListener("click", async () => {
-  const txt = textEl.value.trim();
-  // if there's an uploaded file and user left text empty, prefer file input mode
-  let inputType = "text";
-  let payload = { inputType: "text", text: txt, mode: modeEl.value };
-
-  // if text empty but file exists and uploadInfo has link, prompt to use file
-  const f = fileEl.files[0];
-  if (!txt && f) {
-    // get public link shown in uploadInfo (if any)
-    const link = uploadInfo.querySelector?.("a")?.href;
-    if (link) {
-      inputType = "file";
-      payload = { inputType: "file", fileUrl: link, mode: modeEl.value };
-    } else {
-      return alert("Vui lòng upload file trước (bấm Upload File) hoặc nhập văn bản.");
-    }
-  } else {
-    if (!txt) return alert("Nhập văn bản hoặc upload file/URL");
-  }
-
-  setLoading(true);
-  const j = await postJSON("/api/process", payload);
-  handleResponse(j);
-});
-
-// OCR image using Tesseract.js in browser
-ocrBtn.addEventListener("click", async () => {
-  const f = imgFileEl.files[0];
-  if (!f) return alert("Choose an image file first");
-  ocrStatus.textContent = "OCR in progress...";
-  setLoading(true);
-  try {
-    const { createWorker } = Tesseract;
-    const worker = createWorker({ logger: m => {
-      ocrStatus.textContent = `OCR: ${Math.round((m.progress||0)*100)}% ${m.status||''}`;
-    }});
-    await worker.load();
-    await worker.loadLanguage('eng+vie');
-    await worker.initialize('eng+vie');
-    const { data: { text } } = await worker.recognize(f);
-    await worker.terminate();
-    textEl.value = (textEl.value ? (textEl.value + "\n\n" + text) : text).slice(0, 20000);
-    ocrStatus.textContent = "OCR done. Extracted text inserted into textarea.";
-  } catch (e) {
-    console.error("OCR error", e);
-    ocrStatus.textContent = "OCR failed: " + e.message;
-  } finally {
-    setLoading(false);
-  }
-});
-
-// handle response
+/* HANDLE RESPONSE ---------------------------------*/
 function handleResponse(j) {
-  setLoading(false);
-  if (!j) {
-    resultEl.textContent = "No response";
-    return;
-  }
   if (!j.success) {
-    resultEl.textContent = "❌ " + (j.error || "Unknown error");
+    resultEl.textContent = "❌ Lỗi: " + j.error;
     return;
   }
 
+  // TEXT RESULTS
   if (j.type === "text") {
+    exportBtn.style.display = "none";
     resultEl.textContent = j.output;
-    exportPngBtn.style.display = "none";
     return;
   }
 
+  // CHART
   if (j.type === "chart") {
-    renderChart(j.chart, j.meta);
+    exportBtn.style.display = "none";
+    renderChart(j.chart);
     return;
   }
 
-  if (j.type === "mindmap_json") {
-    renderMindmapFromJson(j.output);
-    return;
-  }
-
+  // MINDMAP TEXT
   if (j.type === "mindmap_text") {
-    // j.output has { json: {...}, text: "• ..." }
-    const html = `<h3>${escapeHtml(j.output.json?.title || "Mindmap")}</h3>
-<pre style="white-space:pre-wrap;">${escapeHtml(j.output.text || '')}</pre>`;
-    resultEl.innerHTML = html;
-    exportPngBtn.style.display = "none";
-    // also render visual mindmap if JSON present
-    if (j.output.json) renderMindmapFromJson(j.output.json);
+    renderMindmap(j.output);
     return;
   }
-
-  // fallback
-  resultEl.textContent = JSON.stringify(j, null, 2);
 }
 
-// render mindmap json -> mermaid flowchart & show export button
-function renderMindmapFromJson(data) {
-  try {
-    let idCounter = 0;
-    function newId(){ idCounter++; return 'N' + idCounter; }
-    const nodes = [];
-    const edges = [];
-    function walk(node, parentId){
-      const id = newId();
-      const label = (node.label || node.name || '').replace(/"/g, '\\"');
-      nodes.push(`${id}["${label}"]`);
-      if (parentId) edges.push(`${parentId} --> ${id}`);
-      if (node.children && Array.isArray(node.children)){
-        node.children.forEach(c => walk(c, id));
-      }
-    }
-    const rootId = newId();
-    const title = (data.title || 'Mindmap').replace(/"/g, '\\"');
-    nodes.push(`${rootId}["${title}"]`);
-    if (Array.isArray(data.nodes)) data.nodes.forEach(n => walk(n, rootId));
+/* RENDER CHART ------------------------------------*/
+function renderChart(chart) {
+  resultEl.innerHTML = `<canvas id="canvas"></canvas>`;
+  const ctx = $("canvas").getContext("2d");
 
-    const mermaidText = `flowchart TB\n${nodes.join('\n')}\n${edges.join('\n')}`;
-    const insertId = 'mermaid-'+Date.now();
-    mermaid.mermaidAPI.render(insertId, mermaidText, (svgCode) => {
-      // append svg below textual result
-      const prev = resultEl.innerHTML;
-      resultEl.innerHTML = prev + `<div>${svgCode}</div>`;
-      lastMindmapSvg = svgCode;
-      exportPngBtn.style.display = "inline-block";
-    }, resultEl);
-  } catch (e) {
-    resultEl.textContent = "Render error: " + e.message;
+  new Chart(ctx, {
+    type: "bar",
+    data: chart,
+    options: { responsive: true }
+  });
+}
+
+/* RENDER MINDMAP ----------------------------------*/
+function renderMindmap(data) {
+  const txt = data.text;
+  const json = data.json;
+
+  let idCounter = 0;
+  const nid = () => "N" + (++idCounter);
+
+  let nodes = [];
+  let edges = [];
+
+  const rootId = nid();
+  nodes.push(`${rootId}["${json.title}"]`);
+
+  function walk(node, parent) {
+    let id = nid();
+    nodes.push(`${id}["${node.label}"]`);
+    edges.push(`${parent} --> ${id}`);
+    if (node.children) node.children.forEach(c => walk(c, id));
   }
+
+  json.nodes.forEach(n => walk(n, rootId));
+
+  const mermaidCode = `flowchart TB\n${nodes.join("\n")}\n${edges.join("\n")}`;
+
+  resultEl.innerHTML = `
+    <pre>${txt}</pre>
+    <div id="mm"></div>
+  `;
+
+  mermaid.mermaidAPI.render("mindmapGraph", mermaidCode, svg => {
+    lastSvg = svg;
+    $("mm").innerHTML = svg;
+    exportBtn.style.display = "inline-block";
+  });
 }
 
-// Export svg to png
-exportPngBtn.addEventListener("click", () => {
-  if (!lastMindmapSvg) return alert("Không có mindmap để xuất.");
-  const svg = lastMindmapSvg;
-  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
+/* EXPORT PNG --------------------------------------*/
+exportBtn.addEventListener("click", () => {
+  if (!lastSvg) return;
+  
+  const blob = new Blob([lastSvg], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+
   const img = new Image();
   img.onload = () => {
     const canvas = document.createElement("canvas");
-    const scale = 2;
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
+    canvas.width = img.width * 2;
+    canvas.height = img.height * 2;
+
     const ctx = canvas.getContext("2d");
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0,0,canvas.width,canvas.height);
-    ctx.drawImage(img, 0,0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "mindmap.png";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    }, "image/png");
+    ctx.scale(2, 2);
+    ctx.drawImage(img, 0, 0);
+
+    const link = document.createElement("a");
+    link.download = "mindmap.png";
+    link.href = canvas.toDataURL();
+    link.click();
   };
-  img.onerror = () => {
-    alert("Không thể chuyển SVG sang PNG.");
-    URL.revokeObjectURL(url);
-  };
+
   img.src = url;
 });
-
-// render chart using Chart.js
-let activeChart = null;
-function renderChart(chartObj, meta) {
-  resultEl.innerHTML = `<h3>Biểu đồ</h3><canvas id="chartCanvas"></canvas>
-    <div class="muted">Meta: ${escapeHtml(JSON.stringify(meta || {}, null, 2))}</div>`;
-  const ctx = document.getElementById("chartCanvas").getContext("2d");
-  if (activeChart) {
-    try { activeChart.destroy(); } catch(e) {}
-  }
-  const datasets = (chartObj.datasets || []).map(ds => ({
-    label: ds.label || "Series",
-    data: ds.data || [],
-    fill: false
-  }));
-  activeChart = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: chartObj.labels || [],
-      datasets
-    },
-    options: {
-      responsive: true,
-      scales: {
-        x: { ticks: { autoSkip: true, maxRotation: 45, minRotation: 0 } },
-        y: { beginAtZero: true }
-      }
-    }
-  });
-  exportPngBtn.style.display = "none";
-}
-
-// set title safely (block offensive content)
-setTitleBtn.addEventListener("click", () => {
-  const newTitle = newTitleEl.value.trim();
-  if (!newTitle) return alert("Nhập tiêu đề mới");
-  // simple check: block words that are slurs (basic)
-  const lowered = newTitle.toLowerCase();
-  const blocked = ["slur-example"]; // expand as needed
-  for (const b of blocked) {
-    if (lowered.includes(b)) {
-      return alert("Tiêu đề chứa từ không phù hợp. Vui lòng chọn tiêu đề khác.");
-    }
-  }
-  appTitleEl.textContent = newTitle;
-  newTitleEl.value = "";
-});
-
-// ui helpers
-function setLoading(isLoading) {
-  generateBtn.disabled = isLoading;
-  fetchBtn.disabled = isLoading;
-  uploadBtn.disabled = isLoading;
-  ocrBtn.disabled = isLoading;
-  exportPngBtn.style.display = "none";
-  resultEl.innerHTML = isLoading ? "⏳ Đang xử lý..." : "";
-}
-
-function escapeHtml(s) {
-  if (!s) return '';
-  return s.replace(/[&<>"'`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'})[c]);
-}
