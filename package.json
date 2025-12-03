@@ -17,21 +17,7 @@
     "pdf-parse": "^1.1.1",
     "sanitize-html": "^2.12.1",
     "xlsx": "^0.18.5",
-    "csv-parse": "^5.3.0"
+    "csv-parse": "^5.3.0",
+    "tesseract.js-node": "^4.0.2"
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
