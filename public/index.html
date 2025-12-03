@@ -26,7 +26,6 @@
             <option value="summary">Tóm tắt</option>
             <option value="flashcards">Flashcards</option>
             <option value="qa">Q&A</option>
-            <option value="mindmap">Mindmap (AI trả JSON → vẽ)</option>
             <option value="mindmap_text">Mindmap (văn bản + JSON)</option>
         </select>
 
@@ -47,18 +46,6 @@
         </div>
 
         <div class="row">
-            <label for="imgFile">OCR ảnh (image):</label>
-            <input type="file" id="imgFile" accept="image/*" />
-            <button id="ocrBtn">OCR</button>
-            <span id="ocrStatus" class="muted"></span>
-        </div>
-
-        <div class="row">
-            <input id="newTitle" placeholder="Đổi tiêu đề ứng dụng..." />
-            <button id="setTitleBtn">Set title</button>
-        </div>
-
-        <div class="row">
             <button id="generateBtn">Generate</button>
             <button id="exportPngBtn" style="display:none;">Export Mindmap PNG</button>
         </div>
@@ -71,3 +58,4 @@
 <script src="script.js"></script>
 </body>
 </html>
+
