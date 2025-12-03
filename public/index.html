@@ -8,21 +8,17 @@
 
   <!-- Mermaid để vẽ mindmap -->
   <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <!-- Chart.js để vẽ biểu đồ từ bảng điểm -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Tesseract.js cho OCR (nếu cần dùng trong browser) -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
 
-  <style>
-    body { background:#eef4ff; font-family: Arial, sans-serif; padding:20px; }
-    .container { max-width:1000px; margin:auto; }
-    textarea { width:100%; height:200px; padding:10px; }
-    .card { background:white; padding:20px; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.1); }
-    button { padding:10px 16px; border:0; background:#3b6cff; color:white; border-radius:8px; cursor:pointer; }
-    #result { margin-top:20px; background:white; padding:20px; border-radius:10px; min-height:150px; }
-    .row { margin-top:10px; display:flex; gap:10px; align-items:center; }
-  </style>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
 </head>
 
 <body>
 <div class="container">
-    <h1>HappyUni</h1>
+    <h1 id="appTitle">HappyUni</h1>
 
     <div class="card">
         <label>Chọn chế độ:</label>
@@ -30,7 +26,8 @@
             <option value="summary">Tóm tắt</option>
             <option value="flashcards">Flashcards</option>
             <option value="qa">Q&A</option>
-            <option value="mindmap">Mindmap (văn bản → hình ảnh)</option>
+            <option value="mindmap">Mindmap (AI trả JSON → vẽ)</option>
+            <option value="mindmap_text">Mindmap (văn bản + JSON)</option>
         </select>
 
         <br><br>
@@ -42,11 +39,23 @@
             <input type="file" id="file" />
             <button id="uploadBtn">Upload File</button>
         </div>
-        <div id="uploadInfo"></div>
+        <div id="uploadInfo" class="muted"></div>
 
         <div class="row">
             <input id="url" placeholder="Dán URL..." style="flex:1;">
             <button id="fetchBtn">Dán URL & Generate</button>
+        </div>
+
+        <div class="row">
+            <label for="imgFile">OCR ảnh (image):</label>
+            <input type="file" id="imgFile" accept="image/*" />
+            <button id="ocrBtn">OCR</button>
+            <span id="ocrStatus" class="muted"></span>
+        </div>
+
+        <div class="row">
+            <input id="newTitle" placeholder="Đổi tiêu đề ứng dụng..." />
+            <button id="setTitleBtn">Set title</button>
         </div>
 
         <div class="row">
@@ -56,172 +65,9 @@
     </div>
 
     <h2>Kết quả</h2>
-    <div id="result">Kết quả sẽ hiển thị ở đây.</div>
+    <div id="result" class="result">Kết quả sẽ hiển thị ở đây.</div>
 </div>
 
-<script>
-mermaid.initialize({ startOnLoad: false });
-
-const $ = id => document.getElementById(id);
-const textEl = $("text");
-const fileEl = $("file");
-const uploadBtn = $("uploadBtn");
-const uploadInfo = $("uploadInfo");
-const fetchBtn = $("fetchBtn");
-const urlEl = $("url");
-const modeEl = $("mode");
-const generateBtn = $("generateBtn");
-const resultEl = $("result");
-const exportBtn = $("exportPngBtn");
-
-let lastSvg = "";
-
-// POST helper
-async function postJSON(url, data) {
-    const res = await fetch(url, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(data)
-    });
-    return res.json();
-}
-
-uploadBtn.onclick = async () => {
-    const f = fileEl.files[0];
-    if (!f) return alert("Chọn file trước");
-
-    const fd = new FormData();
-    fd.append("file", f);
-
-    uploadInfo.innerHTML = "Đang upload…";
-
-    const res = await fetch("/api/upload", { method:"POST", body: fd });
-    const json = await res.json();
-
-    if (json.success) {
-        uploadInfo.innerHTML = `Uploaded: <a href="${json.fileUrl}" target="_blank">${json.fileUrl}</a>`;
-        if (json.extractedText) textEl.value = json.extractedText;
-    } else {
-        uploadInfo.innerHTML = "Lỗi upload: " + json.error;
-    }
-};
-
-// URL fetch
-fetchBtn.onclick = async () => {
-    const url = urlEl.value.trim();
-    if (!url) return alert("Nhập URL");
-
-    resultEl.innerHTML = "⏳ Đang xử lý URL…";
-
-    const json = await postJSON("/api/process", {
-        inputType:"url",
-        url,
-        mode: modeEl.value
-    });
-
-    handleResult(json);
-};
-
-// Generate từ text
-generateBtn.onclick = async () => {
-    const txt = textEl.value.trim();
-    if (!txt) return alert("Nhập văn bản");
-
-    resultEl.innerHTML = "⏳ Đang xử lý…";
-
-    const json = await postJSON("/api/process", {
-        inputType: "text",
-        text: txt,
-        mode: modeEl.value
-    });
-
-    handleResult(json);
-};
-
-// Render kết quả
-function handleResult(res) {
-    if (!res.success) {
-        resultEl.innerHTML = "❌ " + res.error;
-        return;
-    }
-    if (res.type === "text") {
-        resultEl.innerText = res.output;
-        exportBtn.style.display = "none";
-        return;
-    }
-
-    if (res.type === "mindmap_json") {
-        drawMindmap(res.output);
-    }
-}
-
-// Vẽ mindmap
-function drawMindmap(data) {
-    let idCounter = 0;
-    function newId(){ idCounter++; return "N"+idCounter; }
-
-    const nodes = [];
-    const edges = [];
-
-    function walk(node, parent = null) {
-        const id = newId();
-        const label = (node.label || "").replace(/"/g, '\\"');
-        nodes.push(`${id}["${label}"]`);
-
-        if (parent) edges.push(`${parent} --> ${id}`);
-
-        if (node.children) {
-            node.children.forEach(child => walk(child, id));
-        }
-    }
-
-    const rootId = newId();
-    const title = (data.title || "Mindmap").replace(/"/g, '\\"');
-    nodes.push(`${rootId}["${title}"]`);
-
-    if (data.nodes) {
-        data.nodes.forEach(n => walk(n, rootId));
-    }
-
-    const mermaidText =
-        "flowchart TB\n" + nodes.join("\n") + "\n" + edges.join("\n");
-
-    const insertId = "mm-" + Date.now();
-
-    mermaid.mermaidAPI.render(insertId, mermaidText, (svg) => {
-        resultEl.innerHTML = svg;
-        lastSvg = svg;
-        exportBtn.style.display = "inline-block";
-    });
-}
-
-// Export PNG
-exportBtn.onclick = async () => {
-    if (!lastSvg) return;
-
-    const svgBlob = new Blob([lastSvg], { type: "image/svg+xml" });
-    const url = URL.createObjectURL(svgBlob);
-
-    const img = new Image();
-    img.onload = () => {
-        const c = document.createElement("canvas");
-        c.width = img.width * 2;
-        c.height = img.height * 2;
-        const ctx = c.getContext("2d");
-        ctx.fillStyle = "#fff";
-        ctx.fillRect(0,0,c.width,c.height);
-        ctx.drawImage(img, 0, 0, c.width, c.height);
-
-        c.toBlob((blob)=>{
-            const a = document.createElement("a");
-            a.href = URL.createObjectURL(blob);
-            a.download = "mindmap.png";
-            a.click();
-        });
-    };
-    img.src = url;
-};
-</script>
-
+<script src="script.js"></script>
 </body>
 </html>
