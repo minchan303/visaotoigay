@@ -11,7 +11,12 @@ import bodyParser from "body-parser";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import XLSX from "xlsx";
 import { parse as csvParse } from "csv-parse/sync";
-import Tesseract from "tesseract.js-node";
+
+// OCR
+import Tesseract from "tesseract.js";
+
+// PDF exporter
+import PDFDocument from "pdfkit";
 
 const app = express();
 app.use(cors());
@@ -26,35 +31,30 @@ const upload = multer({ dest: UPLOADS });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-/* ============================================================
-   ==========  OCR SCAN PDF  ==================================
-===============================================================*/
+/* =============================
+   OCR PDF (SCAN)
+============================= */
 async function ocrPdf(filePath) {
   const buffer = fs.readFileSync(filePath);
 
   const result = await Tesseract.recognize(buffer, "vie+eng", {
-    logger: m => console.log("[OCR]: ", m)
+    logger: m => console.log("[OCR]", m)
   });
 
   return result.data.text;
 }
 
-/* ============================================================
-   ==========  READ TEXT FILES  ===============================
-===============================================================*/
+/* =============================
+   TEXT EXTRACTION
+============================= */
 async function extractText(filePath, ext) {
-  ext = ext.toLowerCase();
-
   try {
     if (ext === ".pdf") {
       const data = await pdf(fs.readFileSync(filePath));
-
-      // Nếu pdf-parse KHÔNG đọc được (PDF dạng scan)
       if (!data.text.trim()) {
-        console.log("→ PDF scan, chuyển sang OCR");
+        console.log("PDF SCAN → OCR");
         return await ocrPdf(filePath);
       }
-
       return data.text;
     }
 
@@ -66,19 +66,18 @@ async function extractText(filePath, ext) {
     if (ext === ".txt") {
       return fs.readFileSync(filePath, "utf8");
     }
-  } catch (e) {
-    console.log("extractText lỗi → fallback OCR");
+  } catch (err) {
     return await ocrPdf(filePath);
   }
 
   return "";
 }
 
-/* ============================================================
-   ==========  SPREADSHEET  ===================================
-===============================================================*/
-function parseSpreadsheet(filePath, ext) {
-  const buf = fs.readFileSync(filePath);
+/* =============================
+   SPREADSHEET
+============================= */
+function parseSpreadsheet(fp, ext) {
+  const buf = fs.readFileSync(fp);
 
   if (ext === ".csv") {
     return csvParse(buf.toString(), { columns: true, skip_empty_lines: true });
@@ -91,16 +90,13 @@ function parseSpreadsheet(filePath, ext) {
 
 function detectGradeSheet(rows) {
   if (!rows.length) return false;
-
-  const keys = Object.keys(rows[0]).map(x => x.toLowerCase());
-  const match = ["điểm", "diem", "score", "grade"];
-
-  return keys.some(k => match.some(m => k.includes(m)));
+  const keys = Object.keys(rows[0]).join(" ").toLowerCase();
+  return ["điểm", "score", "grade"].some(k => keys.includes(k));
 }
 
-/* ============================================================
-   ==========   GEMINI API   ==================================
-===============================================================*/
+/* =============================
+   GEMINI
+============================= */
 async function askGemini(prompt) {
   const model = genAI.getGenerativeModel({
     model: "models/gemini-2.0-flash"
@@ -110,12 +106,10 @@ async function askGemini(prompt) {
   return result.response.text();
 }
 
-/* ============================================================
-   ==========   UPLOAD FILE   =================================
-===============================================================*/
+/* =============================
+   ROUTES: UPLOAD
+============================= */
 app.post("/api/upload", upload.single("file"), async (req, res) => {
-  if (!req.file) return res.json({ success: false });
-
   const ext = path.extname(req.file.originalname);
   const newFile = req.file.path + ext;
 
@@ -139,90 +133,78 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   });
 });
 
-/* ============================================================
-   ==========   PROCESS   =====================================
-===============================================================*/
+/* =============================
+   ROUTES: PROCESS
+============================= */
 app.post("/api/process", async (req, res) => {
-  try {
-    let { inputType, text, url, fileUrl, mode } = req.body;
-    let content = "";
+  let { inputType, text, url, fileUrl, mode } = req.body;
+  let content = "";
 
-    // TEXT
-    if (inputType === "text") content = text;
+  // Determine input
+  if (inputType === "text") content = text;
+  if (inputType === "url") {
+    const r = await fetch(url);
+    content = sanitizeHtml(await r.text(), { allowedTags: [] });
+  }
+  if (inputType === "file") {
+    const fp = path.join(UPLOADS, path.basename(fileUrl));
+    const ext = path.extname(fp);
 
-    // URL
-    if (inputType === "url") {
-      const r = await fetch(url);
-      const html = await r.text();
-      content = sanitizeHtml(html, { allowedTags: [] });
-    }
-
-    // FILE
-    if (inputType === "file") {
-      const filePath = path.join(UPLOADS, path.basename(fileUrl));
-      const ext = path.extname(filePath);
-
-      if ([".csv", ".xls", ".xlsx"].includes(ext)) {
-        const rows = parseSpreadsheet(filePath, ext);
-
-        if (detectGradeSheet(rows)) {
-          return res.json({
-            success: true,
-            type: "chart",
-            chart: {
-              labels: rows.map(r => r[Object.keys(r)[0]]),
-              datasets: [
-                {
-                  label: "Điểm",
-                  data: rows.map(r =>
-                    Number(r[Object.keys(r)[1]]) || 0
-                  )
-                }
-              ]
-            }
-          });
-        }
-
-        content = JSON.stringify(rows, null, 2);
-      } else {
-        content = await extractText(filePath, ext);
+    if ([".csv", ".xls", ".xlsx"].includes(ext)) {
+      const rows = parseSpreadsheet(fp, ext);
+      if (detectGradeSheet(rows)) {
+        return res.json({
+          success: true,
+          type: "chart",
+          chart: {
+            labels: rows.map(r => r[Object.keys(r)[0]]),
+            datasets: [
+              {
+                label: "Điểm",
+                data: rows.map(r => Number(r[Object.keys(r)[1]]) || 0)
+              }
+            ]
+          }
+        });
       }
+
+      content = JSON.stringify(rows, null, 2);
+    } else {
+      content = await extractText(fp, ext);
     }
+  }
 
-    /* ==================  FORMATTER ĐẸP  ================== */
+  /* ===================
+     MODE HANDLING
+  ===================== */
 
-    if (mode === "summary") {
-      const output = await askGemini(`
-Hãy tóm tắt nội dung sau thành 4–6 ý đẹp mắt.
-• Dùng bullet gọn
-• Viết rõ ràng, mạch lạc
-• Tiếng Việt
-
+  if (mode === "summary") {
+    const output = await askGemini(`
+Tóm tắt nội dung đẹp:
+• Ngắn gọn
+• Có bullet
+• Dễ đọc
 Nội dung:
 ${content}
 `);
+    return res.json({ success: true, type: "text", output });
+  }
 
-      return res.json({ success: true, type: "text", output });
-    }
-
-    if (mode === "flashcards") {
-      const output = await askGemini(`
-Tạo flashcards đẹp dưới dạng JSON:
+  if (mode === "flashcards") {
+    const output = await askGemini(`
+Tạo flashcards đẹp:
 [
   {"q": "...", "a": "..."}
 ]
-
 Nội dung:
 ${content}
 `);
+    return res.json({ success: true, type: "text", output });
+  }
 
-      return res.json({ success: true, type: "text", output });
-    }
-
-    if (mode === "qa") {
-      const output = await askGemini(`
-Tạo danh sách câu hỏi & trả lời rõ ràng.
-Định dạng:
+  if (mode === "qa") {
+    const output = await askGemini(`
+Tạo danh sách câu hỏi – trả lời đẹp:
 
 Câu hỏi 1:
 Trả lời 1
@@ -233,45 +215,65 @@ Trả lời 2
 Nội dung:
 ${content}
 `);
+    return res.json({ success: true, type: "text", output });
+  }
 
-      return res.json({ success: true, type: "text", output });
-    }
+  if (mode === "learning_sections") {
+    const output = await askGemini(`
+Chia bài giảng thành từng mục học rõ ràng:
 
-    if (mode === "mindmap_text") {
-      const out = await askGemini(`
-TRẢ VỀ DUY NHẤT 1 JSON SAU:
+1. Chủ đề
+- Mô tả
+- Ý chính
+
+2. Chủ đề
+...
+
+Nội dung:
+${content}
+`);
+    return res.json({ success: true, type: "text", output });
+  }
+
+  if (mode === "mindmap_text") {
+    const out = await askGemini(`
+TRẢ VỀ DUY NHẤT 1 JSON:
 
 {
   "json": {
     "title": "...",
-    "nodes": [ { "label":"...", "children":[...] } ]
+    "nodes": [
+      {"label":"...", "children":[...]}
+    ]
   },
-  "text": "• Mindmap dạng gạch đầu dòng đẹp"
+  "text": "• ... mindmap bullet ..."
 }
 
 Nội dung:
 ${content}
 `);
-
-      const json = out.match(/\{[\s\S]+\}/);
-      return res.json({
-        success: true,
-        type: "mindmap_text",
-        output: JSON.parse(json[0])
-      });
-    }
-
-  } catch (e) {
-    console.log(e);
-    res.json({ success: false, error: e.message });
+    return res.json({
+      success: true,
+      type: "mindmap_text",
+      output: JSON.parse(out.match(/\{[\s\S]+\}/)[0])
+    });
   }
 });
 
-/* ============================================================
-   STATIC
-===============================================================*/
-app.use("/uploads", express.static(UPLOADS));
+/* =============================
+   EXPORT PDF (optional)
+============================= */
+app.post("/api/export/pdf", (req, res) => {
+  const { text } = req.body;
+
+  const doc = new PDFDocument();
+  res.setHeader("Content-Type", "application/pdf");
+  doc.pipe(res);
+
+  doc.fontSize(14).text(text, { align: "left" });
+  doc.end();
+});
 
 app.listen(process.env.PORT || 3000, () =>
-  console.log("Server running")
+  console.log("🚀 Server running")
 );
